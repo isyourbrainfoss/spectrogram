@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
+import 'dart:ui' as ui show Image, PixelFormat, decodeImageFromPixels;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/features/plot/axis_labels.dart';
 import 'package:spectrogram/features/plot/crosshair_overlay.dart';
+import 'package:spectrogram/features/plot/plot_pointer.dart';
 import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
 
@@ -40,6 +42,8 @@ class _SpectrogramViewState extends State<SpectrogramView>
   double? _lastMaxFreq;
   int _gen = 0;
   bool _rebuildQueued = false;
+  final _pointer = PlotPointerController();
+  PointerDeviceKind _lastKind = PointerDeviceKind.touch;
 
   /// Fixed image height for log remapping (smooth on all scales).
   static const _imageHeight = 256;
@@ -205,11 +209,9 @@ class _SpectrogramViewState extends State<SpectrogramView>
     });
   }
 
-  void _handleLocal(Offset local, Size size) {
-    if (size.width <= 0 || size.height <= 0) return;
-    final nx = (local.dx / size.width).clamp(0.0, 1.0);
-    final ny = (1.0 - local.dy / size.height).clamp(0.0, 1.0);
-    widget.onCrosshairChanged?.call(CrosshairPoint(nx: nx, ny: ny));
+  void _emit(CrosshairPoint p) {
+    setState(() {}); // refresh fingerLocal for readout placement
+    widget.onCrosshairChanged?.call(p.clamp01());
   }
 
   @override
@@ -236,52 +238,98 @@ class _SpectrogramViewState extends State<SpectrogramView>
             return const SizedBox.expand();
           }
           return Listener(
-            onPointerDown: (ev) => _handleLocal(ev.localPosition, size),
-            onPointerMove: (ev) {
-              if (ev.down) _handleLocal(ev.localPosition, size);
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (ev) {
+              _lastKind = ev.kind;
+              final p = _pointer.onPointerDown(
+                ev.localPosition,
+                size,
+                ev.kind,
+                existing: widget.crosshair,
+              );
+              _emit(p);
             },
-            child: MouseRegion(
-              onHover: (ev) {
-                if (widget.crosshair != null) {
-                  _handleLocal(ev.localPosition, size);
-                }
+            onPointerMove: (ev) {
+              if (!ev.down) return;
+              _lastKind = ev.kind;
+              final p = _pointer.onPointerMove(
+                ev.localPosition,
+                size,
+                ev.kind,
+                current: widget.crosshair ??
+                    const CrosshairPoint(nx: 0.5, ny: 0.5),
+              );
+              if (p != null) _emit(p);
+            },
+            onPointerUp: (_) => _pointer.onPointerUp(),
+            onPointerCancel: (_) => _pointer.onPointerUp(),
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onLongPressStart: (details) {
+                final p = _pointer.onLongPressStart(
+                  details.localPosition,
+                  size,
+                  _lastKind,
+                  existing: widget.crosshair,
+                );
+                _emit(p);
               },
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  RepaintBoundary(
-                    child: CustomPaint(
-                      painter: _SpectrogramPainter(
-                        image: _image,
-                        emptyColor: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        // Include generation so size-only rebuilds still paint.
-                        layoutSize: size,
+              onLongPressMoveUpdate: (details) {
+                final p = _pointer.onLongPressMove(
+                  details.localPosition,
+                  size,
+                  current: widget.crosshair ??
+                      const CrosshairPoint(nx: 0.5, ny: 0.5),
+                );
+                if (p != null) _emit(p);
+              },
+              onLongPressEnd: (_) => _pointer.onLongPressEnd(),
+              child: MouseRegion(
+                onHover: (ev) {
+                  if (widget.crosshair == null) return;
+                  // Desktop: hover updates without touch lift.
+                  final p = _pointer.localToPoint(ev.localPosition, size);
+                  _pointer.fingerLocal = ev.localPosition;
+                  _emit(p);
+                },
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _SpectrogramPainter(
+                          image: _image,
+                          emptyColor: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          layoutSize: size,
+                        ),
+                        size: size,
+                        isComplex: true,
+                        willChange: e.isRunning,
                       ),
-                      size: size,
-                      isComplex: true,
-                      willChange: e.isRunning,
                     ),
-                  ),
-                  if (widget.crosshair != null)
-                    Builder(
-                      builder: (context) {
-                        final sample = e.sampleSpectrogram(
-                          normX: widget.crosshair!.nx,
-                          normY: widget.crosshair!.ny,
-                        );
-                        if (sample == null) return const SizedBox.shrink();
-                        return CrosshairOverlay(
-                          point: widget.crosshair!,
-                          readout: CrosshairReadout(
-                            freqHz: sample.freqHz,
-                            db: sample.db,
-                          ),
-                        );
-                      },
-                    ),
-                ],
+                    if (widget.crosshair != null)
+                      Builder(
+                        builder: (context) {
+                          final sample = e.sampleSpectrogram(
+                            normX: widget.crosshair!.nx,
+                            normY: widget.crosshair!.ny,
+                          );
+                          if (sample == null) return const SizedBox.shrink();
+                          return CrosshairOverlay(
+                            point: widget.crosshair!,
+                            fingerLocal: _pointer.fingerLocal,
+                            readout: CrosshairReadout(
+                              freqHz: sample.freqHz,
+                              db: sample.db,
+                              timeSec: sample.timeSec,
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ),
               ),
             ),
           );

@@ -235,9 +235,20 @@ class SpectrogramEngine extends ChangeNotifier {
     }
   }
 
+  /// Seconds per spectrogram column (hop duration).
+  double get secondsPerColumn => _settings.hopSize / _settings.sampleRate;
+
   /// Spectrogram sample: [normX] 0=oldest … 1=newest,
   /// [normY] 0=minFreq … 1=maxFreq (honours linear/log scale).
-  ({double freqHz, double db, int colAge, int binIndex})? sampleSpectrogram({
+  ///
+  /// [timeSec] is relative to the right edge (“now”); negative = past.
+  ({
+    double freqHz,
+    double db,
+    int colAge,
+    int binIndex,
+    double timeSec,
+  })? sampleSpectrogram({
     required double normX,
     required double normY,
   }) {
@@ -251,11 +262,14 @@ class SpectrogramEngine extends ChangeNotifier {
     );
     final binIndex = FreqAxis.binForFreq(_displayFreqs, hz);
     final db = dbColumnAt(age)[binIndex];
+    // Newest column is age == filled-1 → timeSec ≈ 0.
+    final timeSec = (age - (_filled - 1)) * secondsPerColumn;
     return (
       freqHz: _displayFreqs[binIndex],
       db: db,
       colAge: age,
       binIndex: binIndex,
+      timeSec: timeSec,
     );
   }
 

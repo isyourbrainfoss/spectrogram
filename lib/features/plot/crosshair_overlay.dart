@@ -10,31 +10,77 @@ class CrosshairPoint {
 
   /// 0 = bottom, 1 = top of plot.
   final double ny;
+
+  CrosshairPoint clamp01() => CrosshairPoint(
+        nx: nx.clamp(0.0, 1.0),
+        ny: ny.clamp(0.0, 1.0),
+      );
 }
 
 class CrosshairReadout {
-  const CrosshairReadout({required this.freqHz, required this.db});
+  const CrosshairReadout({
+    required this.freqHz,
+    required this.db,
+    this.timeSec,
+  });
 
   final double freqHz;
   final double db;
 
-  String get label => '${formatFrequency(freqHz)} · ${formatDb(db)}';
+  /// Time relative to the right edge (“now”), negative = past. Spectrogram only.
+  final double? timeSec;
+
+  String get label {
+    final parts = <String>[
+      if (timeSec != null) formatTimeOffset(timeSec!),
+      formatFrequency(freqHz),
+      formatDb(db),
+    ];
+    return parts.join(' · ');
+  }
+}
+
+/// Format seconds relative to “now” (e.g. −1.25 s, −80 ms, now).
+String formatTimeOffset(double sec) {
+  if (sec.isNaN || sec.isInfinite) return '—';
+  if (sec.abs() < 0.0005) return 'now';
+  final sign = sec < 0 ? '−' : '+';
+  final a = sec.abs();
+  if (a < 1.0) {
+    return '$sign${(a * 1000).round()} ms';
+  }
+  if (a < 10) {
+    return '$sign${a.toStringAsFixed(2)} s';
+  }
+  return '$sign${a.toStringAsFixed(1)} s';
 }
 
 /// Draws crosshair lines + floating readout chip over a plot.
+///
+/// [fingerLocal] (when set) pushes the readout away from the finger so it
+/// stays visible on touch devices.
 class CrosshairOverlay extends StatelessWidget {
   const CrosshairOverlay({
     super.key,
     required this.point,
     required this.readout,
+    this.fingerLocal,
     this.showHorizontal = true,
     this.showVertical = true,
   });
 
   final CrosshairPoint point;
   final CrosshairReadout readout;
+
+  /// Latest finger/cursor position in plot local coords (for readout placement).
+  final Offset? fingerLocal;
   final bool showHorizontal;
   final bool showVertical;
+
+  static const _chipW = 200.0;
+  static const _chipH = 28.0;
+  /// Keep readout well clear of the crosshair / fingertip.
+  static const _clearance = 56.0;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +92,13 @@ class CrosshairOverlay extends StatelessWidget {
         final y = (1.0 - point.ny.clamp(0.0, 1.0)) * h; // ny=1 at top
         final scheme = Theme.of(context).colorScheme;
         final lineColor = scheme.onSurface.withValues(alpha: 0.75);
+        final chipPos = _readoutPosition(
+          crossX: x,
+          crossY: y,
+          plotW: w,
+          plotH: h,
+          finger: fingerLocal,
+        );
 
         return Stack(
           clipBehavior: Clip.none,
@@ -61,20 +114,23 @@ class CrosshairOverlay extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: (x + 10).clamp(4.0, w - 160),
-              top: (y - 28).clamp(4.0, h - 32),
+              left: chipPos.dx,
+              top: chipPos.dy,
               child: Material(
-                color: scheme.surface.withValues(alpha: 0.92),
-                elevation: 2,
-                borderRadius: BorderRadius.circular(6),
+                color: scheme.surface.withValues(alpha: 0.94),
+                elevation: 3,
+                shadowColor: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   child: Text(
                     readout.label,
                     key: const Key('chart_crosshair_readout'),
                     style: TextStyle(
                       color: scheme.onSurface,
-                      fontSize: 11,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
@@ -85,6 +141,47 @@ class CrosshairOverlay extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// Place chip away from crosshair and finger; clamp inside plot.
+  static Offset _readoutPosition({
+    required double crossX,
+    required double crossY,
+    required double plotW,
+    required double plotH,
+    Offset? finger,
+  }) {
+    // Prefer above-left of crosshair; flip if near edges or finger is there.
+    final preferAbove = finger == null || finger.dy >= crossY;
+    var left = crossX + 16;
+    var top = preferAbove ? crossY - _clearance - _chipH : crossY + _clearance;
+
+    // If finger is known, push chip to the opposite quadrant from the finger.
+    if (finger != null) {
+      final awayX = finger.dx < crossX ? 1.0 : -1.0;
+      final awayY = finger.dy < crossY ? 1.0 : -1.0;
+      left = crossX + awayX * _clearance * 0.35;
+      top = crossY + awayY * _clearance;
+      // Prefer vertical separation (finger usually below target on phones).
+      if ((finger.dy - crossY).abs() < _clearance) {
+        top = crossY - _clearance - _chipH;
+        if (top < 4) top = crossY + _clearance;
+      }
+    }
+
+    if (left + _chipW > plotW - 4) left = plotW - _chipW - 4;
+    if (left < 4) left = 4;
+    if (top + _chipH > plotH - 4) top = plotH - _chipH - 4;
+    if (top < 4) top = 4;
+
+    // Final check: if still too close to crosshair, snap to top-center band.
+    final chipCenter = Offset(left + _chipW / 2, top + _chipH / 2);
+    if ((chipCenter - Offset(crossX, crossY)).distance < _clearance * 0.85) {
+      left = (plotW - _chipW) / 2;
+      top = 8;
+    }
+
+    return Offset(left, top);
   }
 }
 
@@ -116,7 +213,16 @@ class _CrosshairPainter extends CustomPainter {
     if (showHorizontal) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
-    canvas.drawCircle(Offset(x, y), 3.5, Paint()..color = color);
+    canvas.drawCircle(Offset(x, y), 4, Paint()..color = color);
+    // Outer ring so the target stays visible under a fingertip halo.
+    canvas.drawCircle(
+      Offset(x, y),
+      10,
+      Paint()
+        ..color = color.withValues(alpha: 0.35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
   }
 
   @override

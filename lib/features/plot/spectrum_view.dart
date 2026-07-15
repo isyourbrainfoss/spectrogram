@@ -1,10 +1,12 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/features/plot/axis_labels.dart';
 import 'package:spectrogram/features/plot/crosshair_overlay.dart';
+import 'package:spectrogram/features/plot/plot_pointer.dart';
 import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
 
@@ -29,6 +31,9 @@ class SpectrumView extends StatefulWidget {
 }
 
 class _SpectrumViewState extends State<SpectrumView> {
+  final _pointer = PlotPointerController();
+  PointerDeviceKind _lastKind = PointerDeviceKind.touch;
+
   @override
   void initState() {
     super.initState();
@@ -54,16 +59,19 @@ class _SpectrumViewState extends State<SpectrumView> {
     if (mounted) setState(() {});
   }
 
-  void _handleLocal(Offset local, Size size) {
-    if (size.width <= 0 || size.height <= 0) return;
-    final nx = (local.dx / size.width).clamp(0.0, 1.0);
-    final sample = widget.engine.sampleSpectrum(nx);
+  /// Map free crosshair to spectrum: keep X, snap Y to the curve for display.
+  CrosshairPoint _snapToCurve(CrosshairPoint free) {
+    final sample = widget.engine.sampleSpectrum(free.nx);
     final s = widget.engine.settings;
     final span = (s.maxDb - s.minDb).abs();
-    final ny = sample == null || span < 1e-9
-        ? (1.0 - local.dy / size.height).clamp(0.0, 1.0)
-        : ((sample.db - s.minDb) / span).clamp(0.0, 1.0);
-    widget.onCrosshairChanged?.call(CrosshairPoint(nx: nx, ny: ny));
+    if (sample == null || span < 1e-9) return free.clamp01();
+    final ny = ((sample.db - s.minDb) / span).clamp(0.0, 1.0);
+    return CrosshairPoint(nx: free.nx.clamp(0.0, 1.0), ny: ny);
+  }
+
+  void _emit(CrosshairPoint free) {
+    setState(() {});
+    widget.onCrosshairChanged?.call(_snapToCurve(free));
   }
 
   @override
@@ -79,7 +87,6 @@ class _SpectrumViewState extends State<SpectrumView> {
       maxTicks: 7,
     );
 
-    // Snapshot so paint is stable for this frame.
     final db = Float32List.fromList(engine.displayDb);
     final freqs = Float32List.fromList(engine.displayFreqs);
 
@@ -98,67 +105,112 @@ class _SpectrumViewState extends State<SpectrumView> {
             return const SizedBox.expand();
           }
           return Listener(
-            onPointerDown: (ev) => _handleLocal(ev.localPosition, size),
-            onPointerMove: (ev) {
-              if (ev.down) _handleLocal(ev.localPosition, size);
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (ev) {
+              _lastKind = ev.kind;
+              final p = _pointer.onPointerDown(
+                ev.localPosition,
+                size,
+                ev.kind,
+                existing: widget.crosshair,
+              );
+              _emit(p);
             },
-            child: MouseRegion(
-              onHover: (ev) {
-                if (widget.crosshair != null) {
-                  _handleLocal(ev.localPosition, size);
-                }
+            onPointerMove: (ev) {
+              if (!ev.down) return;
+              _lastKind = ev.kind;
+              final p = _pointer.onPointerMove(
+                ev.localPosition,
+                size,
+                ev.kind,
+                current: widget.crosshair ??
+                    const CrosshairPoint(nx: 0.5, ny: 0.5),
+              );
+              if (p != null) _emit(p);
+            },
+            onPointerUp: (_) => _pointer.onPointerUp(),
+            onPointerCancel: (_) => _pointer.onPointerUp(),
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onLongPressStart: (details) {
+                final p = _pointer.onLongPressStart(
+                  details.localPosition,
+                  size,
+                  _lastKind,
+                  existing: widget.crosshair,
+                );
+                _emit(p);
               },
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  RepaintBoundary(
-                    child: CustomPaint(
-                      painter: _SpectrumPainter(
-                        db: db,
-                        freqs: freqs,
-                        minDb: s.minDb,
-                        maxDb: s.maxDb,
-                        minHz: s.minFreqHz,
-                        maxHz: s.maxFreqHz,
-                        scale: s.freqScale,
-                        freqTicks: xTicks,
-                        lineColor: scheme.primary,
-                        fillColor: scheme.primary.withValues(alpha: 0.22),
-                        gridColor: scheme.outline.withValues(alpha: 0.25),
-                        bgColor: scheme.surfaceContainerHighest,
-                        layoutSize: size,
+              onLongPressMoveUpdate: (details) {
+                final p = _pointer.onLongPressMove(
+                  details.localPosition,
+                  size,
+                  current: widget.crosshair ??
+                      const CrosshairPoint(nx: 0.5, ny: 0.5),
+                );
+                if (p != null) _emit(p);
+              },
+              onLongPressEnd: (_) => _pointer.onLongPressEnd(),
+              child: MouseRegion(
+                onHover: (ev) {
+                  if (widget.crosshair == null) return;
+                  final p = _pointer.localToPoint(ev.localPosition, size);
+                  _pointer.fingerLocal = ev.localPosition;
+                  _emit(p);
+                },
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _SpectrumPainter(
+                          db: db,
+                          freqs: freqs,
+                          minDb: s.minDb,
+                          maxDb: s.maxDb,
+                          minHz: s.minFreqHz,
+                          maxHz: s.maxFreqHz,
+                          scale: s.freqScale,
+                          freqTicks: xTicks,
+                          lineColor: scheme.primary,
+                          fillColor: scheme.primary.withValues(alpha: 0.22),
+                          gridColor: scheme.outline.withValues(alpha: 0.25),
+                          bgColor: scheme.surfaceContainerHighest,
+                          layoutSize: size,
+                        ),
+                        size: size,
+                        isComplex: true,
+                        willChange: engine.isRunning,
                       ),
-                      size: size,
-                      isComplex: true,
-                      willChange: engine.isRunning,
                     ),
-                  ),
-                  if (widget.crosshair != null)
-                    Builder(
-                      builder: (context) {
-                        final sample =
-                            engine.sampleSpectrum(widget.crosshair!.nx);
-                        if (sample == null) return const SizedBox.shrink();
-                        final span = (s.maxDb - s.minDb).abs();
-                        final ny = span < 1e-9
-                            ? 0.0
-                            : ((sample.db - s.minDb) / span).clamp(0.0, 1.0);
-                        final nx = FreqAxis.freqToNorm(
-                          sample.freqHz,
-                          s.minFreqHz,
-                          s.maxFreqHz,
-                          s.freqScale,
-                        );
-                        return CrosshairOverlay(
-                          point: CrosshairPoint(nx: nx, ny: ny),
-                          readout: CrosshairReadout(
-                            freqHz: sample.freqHz,
-                            db: sample.db,
-                          ),
-                        );
-                      },
-                    ),
-                ],
+                    if (widget.crosshair != null)
+                      Builder(
+                        builder: (context) {
+                          final sample =
+                              engine.sampleSpectrum(widget.crosshair!.nx);
+                          if (sample == null) return const SizedBox.shrink();
+                          final span = (s.maxDb - s.minDb).abs();
+                          final ny = span < 1e-9
+                              ? 0.0
+                              : ((sample.db - s.minDb) / span).clamp(0.0, 1.0);
+                          final nx = FreqAxis.freqToNorm(
+                            sample.freqHz,
+                            s.minFreqHz,
+                            s.maxFreqHz,
+                            s.freqScale,
+                          );
+                          return CrosshairOverlay(
+                            point: CrosshairPoint(nx: nx, ny: ny),
+                            fingerLocal: _pointer.fingerLocal,
+                            readout: CrosshairReadout(
+                              freqHz: sample.freqHz,
+                              db: sample.db,
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ),
               ),
             ),
           );
