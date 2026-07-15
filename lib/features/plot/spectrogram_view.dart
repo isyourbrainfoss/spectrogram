@@ -11,6 +11,8 @@ import 'package:spectrogram/features/plot/plot_pointer.dart';
 import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
 
+// formatTimeOffset is in crosshair_overlay.dart
+
 /// Live scrolling spectrogram with optional crosshair.
 ///
 /// Rebuilds its bitmap whenever history exists but the cached image is missing
@@ -37,6 +39,8 @@ class _SpectrogramViewState extends State<SpectrogramView>
   ui.Image? _image;
   int _lastFilled = -1;
   int _lastWrite = -1;
+  int _lastViewStart = -1;
+  int _lastViewCount = -1;
   FreqScale? _lastScale;
   double? _lastMinFreq;
   double? _lastMaxFreq;
@@ -44,6 +48,7 @@ class _SpectrogramViewState extends State<SpectrogramView>
   bool _rebuildQueued = false;
   final _pointer = PlotPointerController();
   PointerDeviceKind _lastKind = PointerDeviceKind.touch;
+  double _lastScaleGesture = 1.0;
 
   /// Fixed image height for log remapping (smooth on all scales).
   static const _imageHeight = 256;
@@ -92,6 +97,8 @@ class _SpectrogramViewState extends State<SpectrogramView>
     _image = null;
     _lastFilled = -1;
     _lastWrite = -1;
+    _lastViewStart = -1;
+    _lastViewCount = -1;
     _lastScale = null;
     _lastMinFreq = null;
     _lastMaxFreq = null;
@@ -99,13 +106,13 @@ class _SpectrogramViewState extends State<SpectrogramView>
 
   void _onEngine() => _ensureImage();
 
-  /// Rebuild when data/settings changed, or when we have data but no image.
+  /// Rebuild when data/settings/viewport changed, or when we have data but no image.
   void _ensureImage() {
     if (!mounted) return;
     final e = widget.engine;
     final s = e.settings;
 
-    if (e.filledColumns == 0 || e.displayBins == 0) {
+    if (e.filledColumns == 0 || e.displayBins == 0 || e.viewColumnCount == 0) {
       if (_image != null) {
         setState(() {
           _image?.dispose();
@@ -119,6 +126,8 @@ class _SpectrogramViewState extends State<SpectrogramView>
     final needsRebuild = _image == null ||
         e.filledColumns != _lastFilled ||
         e.writeIndex != _lastWrite ||
+        e.viewStart != _lastViewStart ||
+        e.viewColumnCount != _lastViewCount ||
         s.freqScale != _lastScale ||
         s.minFreqHz != _lastMinFreq ||
         s.maxFreqHz != _lastMaxFreq;
@@ -127,6 +136,8 @@ class _SpectrogramViewState extends State<SpectrogramView>
 
     _lastFilled = e.filledColumns;
     _lastWrite = e.writeIndex;
+    _lastViewStart = e.viewStart;
+    _lastViewCount = e.viewColumnCount;
     _lastScale = s.freqScale;
     _lastMinFreq = s.minFreqHz;
     _lastMaxFreq = s.maxFreqHz;
@@ -142,7 +153,7 @@ class _SpectrogramViewState extends State<SpectrogramView>
 
   Future<void> _rebuildImage() async {
     final e = widget.engine;
-    final w = e.filledColumns;
+    final w = e.viewColumnCount;
     final bins = e.displayBins;
     if (w == 0 || bins == 0) {
       if (mounted && _image != null) {
@@ -157,10 +168,11 @@ class _SpectrogramViewState extends State<SpectrogramView>
     final s = e.settings;
     final h = _imageHeight;
     final freqs = e.displayFreqs;
-    // Snapshot columns so async decode is not racing ring writes mid-frame.
+    final start = e.viewStart;
+    // Snapshot visible columns only (pan/zoom window).
     final snapshot = List<Uint32List>.generate(
       w,
-      (i) => Uint32List.fromList(e.colorColumnAt(i)),
+      (i) => Uint32List.fromList(e.colorColumnAt(start + i)),
     );
 
     final rowBin = Int32List(h);
@@ -225,116 +237,189 @@ class _SpectrogramViewState extends State<SpectrogramView>
       maxTicks: 8,
     );
 
-    return PlotChrome(
-      yTicks: yTicks,
-      yAxisTitle: s.freqScale == FreqScale.logarithmic ? 'Hz (log)' : 'Hz',
-      xMinLabel: '−${s.timeWindowSec.toStringAsFixed(0)}s',
-      xMidLabel: 'time',
-      xMaxLabel: 'now',
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final size = Size(constraints.maxWidth, constraints.maxHeight);
-          if (size.width <= 0 || size.height <= 0) {
-            return const SizedBox.expand();
-          }
-          return Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (ev) {
-              _lastKind = ev.kind;
-              final p = _pointer.onPointerDown(
-                ev.localPosition,
-                size,
-                ev.kind,
-                existing: widget.crosshair,
-              );
-              _emit(p);
-            },
-            onPointerMove: (ev) {
-              if (!ev.down) return;
-              _lastKind = ev.kind;
-              final p = _pointer.onPointerMove(
-                ev.localPosition,
-                size,
-                ev.kind,
-                current: widget.crosshair ??
-                    const CrosshairPoint(nx: 0.5, ny: 0.5),
-              );
-              if (p != null) _emit(p);
-            },
-            onPointerUp: (_) => _pointer.onPointerUp(),
-            onPointerCancel: (_) => _pointer.onPointerUp(),
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onLongPressStart: (details) {
-                final p = _pointer.onLongPressStart(
-                  details.localPosition,
-                  size,
-                  _lastKind,
-                  existing: widget.crosshair,
-                );
-                _emit(p);
-              },
-              onLongPressMoveUpdate: (details) {
-                final p = _pointer.onLongPressMove(
-                  details.localPosition,
-                  size,
-                  current: widget.crosshair ??
-                      const CrosshairPoint(nx: 0.5, ny: 0.5),
-                );
-                if (p != null) _emit(p);
-              },
-              onLongPressEnd: (_) => _pointer.onLongPressEnd(),
-              child: MouseRegion(
-                onHover: (ev) {
-                  if (widget.crosshair == null) return;
-                  // Desktop: hover updates without touch lift.
-                  final p = _pointer.localToPoint(ev.localPosition, size);
-                  _pointer.fingerLocal = ev.localPosition;
-                  _emit(p);
-                },
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    RepaintBoundary(
-                      child: CustomPaint(
-                        painter: _SpectrogramPainter(
-                          image: _image,
-                          emptyColor: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest,
-                          layoutSize: size,
-                        ),
-                        size: size,
-                        isComplex: true,
-                        willChange: e.isRunning,
+    final leftT = formatTimeOffset(e.viewLeftTimeSec);
+    final rightT = formatTimeOffset(e.viewRightTimeSec);
+
+    return Column(
+      children: [
+        Expanded(
+          child: PlotChrome(
+            yTicks: yTicks,
+            yAxisTitle: s.freqScale == FreqScale.logarithmic ? 'Hz (log)' : 'Hz',
+            xMinLabel: leftT,
+            xMidLabel: e.canPan ? '2-finger pan · pinch zoom' : 'time',
+            xMaxLabel: rightT,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final size = Size(constraints.maxWidth, constraints.maxHeight);
+                if (size.width <= 0 || size.height <= 0) {
+                  return const SizedBox.expand();
+                }
+                return Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerSignal: (signal) {
+                    // Mouse wheel zoom when history is longer than the window.
+                    if (signal is PointerScrollEvent && e.canPan) {
+                      final dy = signal.scrollDelta.dy;
+                      if (dy == 0) return;
+                      e.zoomViewport(dy > 0 ? 1.15 : 1 / 1.15);
+                    }
+                  },
+                  onPointerDown: (ev) {
+                    _lastKind = ev.kind;
+                    final p = _pointer.onPointerDown(
+                      ev.localPosition,
+                      size,
+                      ev.kind,
+                      existing: widget.crosshair,
+                    );
+                    _emit(p);
+                  },
+                  onPointerMove: (ev) {
+                    if (!ev.down) return;
+                    _lastKind = ev.kind;
+                    final p = _pointer.onPointerMove(
+                      ev.localPosition,
+                      size,
+                      ev.kind,
+                      current: widget.crosshair ??
+                          const CrosshairPoint(nx: 0.5, ny: 0.5),
+                    );
+                    if (p != null) _emit(p);
+                  },
+                  onPointerUp: (_) => _pointer.onPointerUp(),
+                  onPointerCancel: (_) => _pointer.onPointerUp(),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onScaleStart: (_) => _lastScaleGesture = 1.0,
+                    onScaleUpdate: (details) {
+                      // Two-finger pan / pinch for import navigation.
+                      if (details.pointerCount >= 2 && e.canPan) {
+                        final dx = details.focalPointDelta.dx;
+                        if (dx.abs() > 0.5) {
+                          final cols = (-dx / size.width * e.viewColumnCount)
+                              .round();
+                          if (cols != 0) e.panViewport(cols);
+                        }
+                        final factor = details.scale / _lastScaleGesture;
+                        if ((factor - 1.0).abs() > 0.02) {
+                          e.zoomViewport(factor);
+                          _lastScaleGesture = details.scale;
+                        }
+                      }
+                    },
+                    onLongPressStart: (details) {
+                      final p = _pointer.onLongPressStart(
+                        details.localPosition,
+                        size,
+                        _lastKind,
+                        existing: widget.crosshair,
+                      );
+                      _emit(p);
+                    },
+                    onLongPressMoveUpdate: (details) {
+                      final p = _pointer.onLongPressMove(
+                        details.localPosition,
+                        size,
+                        current: widget.crosshair ??
+                            const CrosshairPoint(nx: 0.5, ny: 0.5),
+                      );
+                      if (p != null) _emit(p);
+                    },
+                    onLongPressEnd: (_) => _pointer.onLongPressEnd(),
+                    child: MouseRegion(
+                      onHover: (ev) {
+                        if (widget.crosshair == null) return;
+                        final p =
+                            _pointer.localToPoint(ev.localPosition, size);
+                        _pointer.fingerLocal = ev.localPosition;
+                        _emit(p);
+                      },
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          RepaintBoundary(
+                            child: CustomPaint(
+                              painter: _SpectrogramPainter(
+                                image: _image,
+                                emptyColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                                layoutSize: size,
+                              ),
+                              size: size,
+                              isComplex: true,
+                              willChange: e.isRunning,
+                            ),
+                          ),
+                          if (widget.crosshair != null)
+                            Builder(
+                              builder: (context) {
+                                final sample = e.sampleSpectrogram(
+                                  normX: widget.crosshair!.nx,
+                                  normY: widget.crosshair!.ny,
+                                );
+                                if (sample == null) {
+                                  return const SizedBox.shrink();
+                                }
+                                return CrosshairOverlay(
+                                  point: widget.crosshair!,
+                                  fingerLocal: _pointer.fingerLocal,
+                                  readout: CrosshairReadout(
+                                    freqHz: sample.freqHz,
+                                    db: sample.db,
+                                    timeSec: sample.timeSec,
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
                       ),
                     ),
-                    if (widget.crosshair != null)
-                      Builder(
-                        builder: (context) {
-                          final sample = e.sampleSpectrogram(
-                            normX: widget.crosshair!.nx,
-                            normY: widget.crosshair!.ny,
-                          );
-                          if (sample == null) return const SizedBox.shrink();
-                          return CrosshairOverlay(
-                            point: widget.crosshair!,
-                            fingerLocal: _pointer.fingerLocal,
-                            readout: CrosshairReadout(
-                              freqHz: sample.freqHz,
-                              db: sample.db,
-                              timeSec: sample.timeSec,
-                            ),
-                          );
-                        },
-                      ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
-          );
-        },
-      ),
+          ),
+        ),
+        if (e.canPan || !e.followLive)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  tooltip: 'Start of recording',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  onPressed: e.goToHistoryStart,
+                  icon: const Icon(Icons.first_page),
+                ),
+                IconButton(
+                  tooltip: 'Zoom out',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  onPressed: () => e.zoomViewport(1 / 1.4),
+                  icon: const Icon(Icons.zoom_out),
+                ),
+                IconButton(
+                  tooltip: 'Zoom in',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  onPressed: () => e.zoomViewport(1.4),
+                  icon: const Icon(Icons.zoom_in),
+                ),
+                IconButton(
+                  tooltip: 'End / live edge',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  onPressed: e.followLiveEnd,
+                  icon: const Icon(Icons.last_page),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

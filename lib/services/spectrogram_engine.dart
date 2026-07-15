@@ -39,6 +39,11 @@ class SpectrogramEngine extends ChangeNotifier {
   int _filled = 0;
   int _fromBin = 0;
 
+  /// Visible window into history (for import pan/zoom; live always follows end).
+  int _viewStart = 0;
+  int _visibleColumns = 32;
+  bool _followLive = true;
+
   late Float32List _latestDb;
   late Float32List _displayDb;
   late Float32List _displayFreqs;
@@ -75,6 +80,18 @@ class SpectrogramEngine extends ChangeNotifier {
   int get displayBins => _displayDb.length;
   int get filledColumns => _filled;
   int get writeIndex => _writeIndex;
+
+  /// Leftmost visible column age (0 = oldest stored).
+  int get viewStart => _viewStart.clamp(0, math.max(0, _filled - 1));
+
+  /// Number of columns drawn in the spectrogram view.
+  int get viewColumnCount {
+    if (_filled == 0) return 0;
+    return math.min(_visibleColumns, _filled);
+  }
+
+  bool get followLive => _followLive;
+  bool get canPan => _filled > viewColumnCount;
 
   Float32List get latestDb => _latestDb;
   Float32List get displayDb => _displayDb;
@@ -151,7 +168,7 @@ class SpectrogramEngine extends ChangeNotifier {
     );
   }
 
-  void _rebuildPipeline() {
+  void _rebuildPipeline({int? capacity}) {
     _processor = StftProcessor(
       fftSize: _settings.fftSize,
       hopSize: _settings.hopSize,
@@ -159,11 +176,15 @@ class SpectrogramEngine extends ChangeNotifier {
     _colorMap = ColorMap.of(_settings.colormap);
     final range = _computeDisplayBinRange();
     _fromBin = range.fromBin;
-    final cols = _settings.columnCount;
+    final defaultVis = _settings.columnCount;
+    _visibleColumns = defaultVis;
+    final cols = (capacity ?? defaultVis).clamp(32, 120000);
     _colorColumns = List.generate(cols, (_) => Uint32List(range.count));
     _dbColumns = List.generate(cols, (_) => Float32List(range.count));
     _writeIndex = 0;
     _filled = 0;
+    _viewStart = 0;
+    _followLive = true;
     _latestDb = Float32List(_processor.binCount);
     _displayDb = Float32List(range.count);
     _displayFreqs = Float32List(range.count);
@@ -174,6 +195,58 @@ class SpectrogramEngine extends ChangeNotifier {
     }
     _peakFreqHz = null;
     _peakDb = null;
+  }
+
+  /// Pan the visible window by [deltaColumns] (positive → newer / right).
+  void panViewport(int deltaColumns) {
+    if (_filled <= viewColumnCount) return;
+    _followLive = false;
+    final maxStart = _filled - viewColumnCount;
+    _viewStart = (_viewStart + deltaColumns).clamp(0, maxStart);
+    notifyListeners();
+  }
+
+  /// Zoom visible window. [factor] > 1 zooms in (fewer columns / shorter span).
+  void zoomViewport(double factor) {
+    if (_filled == 0 || factor <= 0 || !factor.isFinite) return;
+    _followLive = false;
+    final minVis = math.min(32, _filled);
+    final maxVis = _filled;
+    final next = (_visibleColumns / factor).round().clamp(minVis, maxVis);
+    _visibleColumns = next;
+    final maxStart = math.max(0, _filled - _visibleColumns);
+    _viewStart = _viewStart.clamp(0, maxStart);
+    notifyListeners();
+  }
+
+  /// Snap view to the live edge (right / newest).
+  void followLiveEnd() {
+    _followLive = true;
+    _viewStart = math.max(0, _filled - _visibleColumns);
+    notifyListeners();
+  }
+
+  /// Snap view to the start of stored history (oldest).
+  void goToHistoryStart() {
+    _followLive = false;
+    _viewStart = 0;
+    notifyListeners();
+  }
+
+  /// Visible time span in seconds (approximate).
+  double get viewDurationSec => viewColumnCount * secondsPerColumn;
+
+  /// Time of the left edge of the viewport relative to newest sample.
+  double get viewLeftTimeSec {
+    if (_filled == 0) return 0;
+    return (viewStart - (_filled - 1)) * secondsPerColumn;
+  }
+
+  /// Time of the right edge of the viewport relative to newest sample.
+  double get viewRightTimeSec {
+    if (_filled == 0) return 0;
+    final rightAge = viewStart + viewColumnCount - 1;
+    return (rightAge - (_filled - 1)) * secondsPerColumn;
   }
 
   ({int fromBin, int toBin, int count}) _computeDisplayBinRange() {
@@ -289,7 +362,15 @@ class SpectrogramEngine extends ChangeNotifier {
     cancelFileRecording();
     _sourceSampleRate = sampleRate;
     _sourceLabel = label;
-    _rebuildPipeline();
+
+    // Size history for the whole file (capped), not just the live time window.
+    final hop = _settings.hopSize;
+    final fft = _settings.fftSize;
+    final hops = samples.length <= fft
+        ? 1
+        : ((samples.length - fft) / hop).ceil().clamp(1, 120000);
+    _rebuildPipeline(capacity: hops);
+    _followLive = false;
     _processor.reset();
 
     // Feed in chunks to avoid huge temporary allocations in STFT.
@@ -299,6 +380,9 @@ class SpectrogramEngine extends ChangeNotifier {
       final slice = samples.sublist(i, end);
       _processor.push(slice, _ingestFrame);
     }
+    // Start at beginning of file so user can pan through the whole recording.
+    _viewStart = 0;
+    _visibleColumns = math.min(_settings.columnCount, _filled);
     notifyListeners();
   }
 
@@ -309,8 +393,11 @@ class SpectrogramEngine extends ChangeNotifier {
     }
     _writeIndex = 0;
     _filled = 0;
+    _viewStart = 0;
+    _followLive = true;
     _peakFreqHz = null;
     _peakDb = null;
+    _sourceLabel = null;
     notifyListeners();
   }
 
@@ -348,6 +435,9 @@ class SpectrogramEngine extends ChangeNotifier {
 
     _writeIndex = (_writeIndex + 1) % columnCount;
     if (_filled < columnCount) _filled++;
+    if (_followLive || isRunning) {
+      _viewStart = math.max(0, _filled - _visibleColumns);
+    }
     _maybeNotify();
   }
 
@@ -362,14 +452,6 @@ class SpectrogramEngine extends ChangeNotifier {
   /// Seconds per spectrogram column (hop duration).
   double get secondsPerColumn => _settings.hopSize / activeSampleRate;
 
-  int _columnAgeFromNormX(double normX) {
-    if (_filled <= 1) return 0;
-    final t = normX.clamp(0.0, 1.0);
-    if (t >= 1.0) return _filled - 1;
-    if (t <= 0.0) return 0;
-    return (t * _filled).floor().clamp(0, _filled - 1);
-  }
-
   ({
     double freqHz,
     double db,
@@ -380,8 +462,13 @@ class SpectrogramEngine extends ChangeNotifier {
     required double normX,
     required double normY,
   }) {
-    if (_filled == 0 || displayBins == 0) return null;
-    final age = _columnAgeFromNormX(normX);
+    if (_filled == 0 || displayBins == 0 || viewColumnCount == 0) return null;
+    // Map [0,1] onto the *visible* window (pan/zoom aware).
+    final vis = viewColumnCount;
+    final local = vis <= 1
+        ? 0
+        : (normX.clamp(0.0, 1.0) * (vis - 1)).round().clamp(0, vis - 1);
+    final age = (viewStart + local).clamp(0, _filled - 1);
     final hz = FreqAxis.normToFreq(
       normY,
       _settings.minFreqHz,

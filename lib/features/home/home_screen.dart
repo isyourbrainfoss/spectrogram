@@ -126,47 +126,77 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _saveWavBytes(Uint8List wav) async {
+    final stamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .split('.')
+        .first;
+    final fileName = 'spectrogram_$stamp.wav';
+
+    // Always write to a known-good local path first (never fails on SAF quirks).
     try {
-      final stamp = DateTime.now()
-          .toIso8601String()
-          .replaceAll(':', '-')
-          .split('.')
-          .first;
-      final fileName = 'spectrogram_$stamp.wav';
-
-      // Prefer user-chosen path when the platform supports save dialogs.
-      final savePath = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save recording',
-        fileName: fileName,
-        type: FileType.custom,
-        allowedExtensions: const ['wav'],
-        bytes: wav,
-      );
-      if (savePath != null) {
-        // On some platforms saveFile already wrote [bytes]; ensure file exists.
-        final f = File(savePath.endsWith('.wav') ? savePath : '$savePath.wav');
-        if (!await f.exists() || await f.length() == 0) {
-          await f.writeAsBytes(wav, flush: true);
-        }
-        if (mounted) _snack('Saved ${p.basename(f.path)}');
-        return;
-      }
-
-      // Fallback: app documents directory.
       final dir = await getApplicationDocumentsDirectory();
       final out = File(p.join(dir.path, 'recordings', fileName));
       await out.parent.create(recursive: true);
       await out.writeAsBytes(wav, flush: true);
-      if (mounted) _snack('Saved ${out.path}');
+
+      // Optional: also offer a user-chosen location. On Android, [bytes] is
+      // written via Storage Access Framework; the returned path may not be a
+      // normal filesystem path — do not File() it.
+      try {
+        final savePath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save recording',
+          fileName: fileName,
+          type: FileType.custom,
+          allowedExtensions: const ['wav'],
+          bytes: wav,
+        );
+        if (savePath != null &&
+            savePath.isNotEmpty &&
+            !savePath.startsWith('content:') &&
+            (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+          final f =
+              File(savePath.endsWith('.wav') ? savePath : '$savePath.wav');
+          try {
+            await f.parent.create(recursive: true);
+            await f.writeAsBytes(wav, flush: true);
+            if (mounted) {
+              _snack('Saved ${p.basename(f.path)}', short: true);
+            }
+            return;
+          } catch (_) {
+            // Fall through to local copy message.
+          }
+        } else if (savePath != null && savePath.isNotEmpty) {
+          if (mounted) {
+            _snack('Saved recording', short: true);
+          }
+          return;
+        }
+      } catch (_) {
+        // User cancelled picker or platform threw after write — local copy ok.
+      }
+
+      if (mounted) {
+        _snack('Saved ${out.path}', short: true);
+      }
     } catch (e) {
       _snack('Save failed: $e');
     }
   }
 
-  void _snack(String msg) {
+  void _snack(String msg, {bool short = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        duration: Duration(seconds: short ? 2 : 2),
+        behavior: SnackBarBehavior.floating,
+        // Keep clear of Start/Stop row.
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 88),
+      ),
     );
   }
 
