@@ -3,8 +3,10 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/features/plot/axis_labels.dart';
 import 'package:spectrogram/features/plot/crosshair_overlay.dart';
+import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
 
 /// Live scrolling spectrogram with optional crosshair.
@@ -28,7 +30,11 @@ class _SpectrogramViewState extends State<SpectrogramView> {
   ui.Image? _image;
   int _lastFilled = -1;
   int _lastWrite = -1;
+  FreqScale? _lastScale;
   int _gen = 0;
+
+  /// Fixed image height for log remapping (smooth on all scales).
+  static const _imageHeight = 256;
 
   @override
   void initState() {
@@ -57,28 +63,50 @@ class _SpectrogramViewState extends State<SpectrogramView> {
 
   void _onEngine() {
     final e = widget.engine;
-    if (e.filledColumns == _lastFilled && e.writeIndex == _lastWrite) return;
+    final scale = e.settings.freqScale;
+    if (e.filledColumns == _lastFilled &&
+        e.writeIndex == _lastWrite &&
+        scale == _lastScale) {
+      return;
+    }
     _lastFilled = e.filledColumns;
     _lastWrite = e.writeIndex;
+    _lastScale = scale;
     unawaited(_rebuildImage());
   }
 
   Future<void> _rebuildImage() async {
     final e = widget.engine;
     final w = e.filledColumns;
-    final h = e.displayBins;
-    if (w == 0 || h == 0) {
+    final bins = e.displayBins;
+    if (w == 0 || bins == 0) {
       if (mounted) setState(() {});
       return;
     }
 
+    final s = e.settings;
+    final h = _imageHeight;
+    final freqs = e.displayFreqs;
     final pixels = Uint8List(w * h * 4);
+
+    // Precompute bin index per image row (0 = top = max freq).
+    final rowBin = Int32List(h);
+    for (var row = 0; row < h; row++) {
+      final normFromBottom = h == 1 ? 0.0 : (h - 1 - row) / (h - 1);
+      final hz = FreqAxis.normToFreq(
+        normFromBottom,
+        s.minFreqHz,
+        s.maxFreqHz,
+        s.freqScale,
+      );
+      rowBin[row] = FreqAxis.binForFreq(freqs, hz);
+    }
+
     for (var x = 0; x < w; x++) {
       final col = e.colorColumnAt(x);
-      for (var y = 0; y < h; y++) {
-        final dstY = h - 1 - y;
-        final argb = col[y];
-        final offset = (dstY * w + x) * 4;
+      for (var row = 0; row < h; row++) {
+        final argb = col[rowBin[row]];
+        final offset = (row * w + x) * 4;
         pixels[offset] = (argb >> 16) & 0xFF;
         pixels[offset + 1] = (argb >> 8) & 0xFF;
         pixels[offset + 2] = argb & 0xFF;
@@ -117,11 +145,16 @@ class _SpectrogramViewState extends State<SpectrogramView> {
   Widget build(BuildContext context) {
     final e = widget.engine;
     final s = e.settings;
+    final yTicks = frequencyAxisTicks(
+      minHz: s.minFreqHz,
+      maxHz: s.maxFreqHz,
+      scale: s.freqScale,
+      maxTicks: 8,
+    );
 
     return PlotChrome(
-      yMinLabel: formatFrequency(s.minFreqHz),
-      yMidLabel: formatFrequency((s.minFreqHz + s.maxFreqHz) / 2),
-      yMaxLabel: formatFrequency(s.maxFreqHz),
+      yTicks: yTicks,
+      yAxisTitle: s.freqScale == FreqScale.logarithmic ? 'Hz (log)' : 'Hz',
       xMinLabel: '−${s.timeWindowSec.toStringAsFixed(0)}s',
       xMidLabel: 'time',
       xMaxLabel: 'now',

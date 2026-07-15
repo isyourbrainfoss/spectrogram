@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spectrogram/dsp/colormap.dart';
+import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/dsp/pcm.dart';
 import 'package:spectrogram/dsp/stft_processor.dart';
 import 'package:spectrogram/models/app_settings.dart';
@@ -112,6 +113,42 @@ void main() {
       );
       final peak = s.reduce((a, b) => math.max(a.abs(), b.abs()));
       expect(peak, lessThanOrEqualTo(0.5 + 1e-9));
+    });
+  });
+
+  group('FreqAxis', () {
+    test('linear endpoints', () {
+      expect(
+        FreqAxis.freqToNorm(20, 20, 12000, FreqScale.linear),
+        closeTo(0, 1e-9),
+      );
+      expect(
+        FreqAxis.freqToNorm(12000, 20, 12000, FreqScale.linear),
+        closeTo(1, 1e-9),
+      );
+      expect(
+        FreqAxis.normToFreq(0.5, 0, 1000, FreqScale.linear),
+        closeTo(500, 1e-6),
+      );
+    });
+
+    test('log maps mid-octave-ish below linear midpoint', () {
+      // Geometric mean of 20 and 20000 is ~632, not 10010.
+      final mid = FreqAxis.normToFreq(0.5, 20, 20000, FreqScale.logarithmic);
+      expect(mid, closeTo(math.sqrt(20 * 20000), 1));
+      expect(mid, lessThan(5000));
+    });
+
+    test('common ticks include 100 Hz and 1 kHz in default range', () {
+      final ticks = FreqAxis.ticks(
+        minHz: 20,
+        maxHz: 12000,
+        scale: FreqScale.logarithmic,
+        maxTicks: 8,
+      );
+      final values = ticks.map((t) => t.hz).toList();
+      expect(values.any((h) => (h - 100).abs() < 1), isTrue);
+      expect(values.any((h) => (h - 1000).abs() < 1), isTrue);
     });
   });
 }

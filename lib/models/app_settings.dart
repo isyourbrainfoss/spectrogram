@@ -11,7 +11,8 @@ class AppSettings {
     this.maxDb = 0.0,
     this.colormap = ColormapKind.viridis,
     this.colorScheme = ThemePreference.system,
-    this.freqScale = FreqScale.linear,
+    // Logarithmic is the usual audio spectrogram default (more room for lows).
+    this.freqScale = FreqScale.logarithmic,
   });
 
   final int sampleRate;

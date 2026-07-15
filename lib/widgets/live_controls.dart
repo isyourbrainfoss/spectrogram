@@ -64,17 +64,23 @@ class LiveControls extends StatelessWidget {
                     }
                   },
                   icon: Icon(running ? Icons.stop_rounded : Icons.mic_rounded),
-                  label: Text(running ? 'Stop' : 'Start'),
+                  label: Text(running ? 'Stop mic' : 'Start mic'),
                 ),
               ),
               const SizedBox(width: 8),
+              // Freeze = pause the plot while the mic stays open (inspect with
+              // crosshair). Only meaningful while capture is running.
               IconButton.filledTonal(
-                tooltip: engine.frozen ? 'Unfreeze' : 'Freeze',
-                onPressed: running || engine.filledColumns > 0
-                    ? engine.toggleFreeze
-                    : null,
+                tooltip: !running
+                    ? 'Freeze (start mic first)'
+                    : engine.frozen
+                        ? 'Resume plot'
+                        : 'Freeze plot (mic stays on)',
+                onPressed: running ? engine.toggleFreeze : null,
                 icon: Icon(
-                  engine.frozen ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                  engine.frozen
+                      ? Icons.play_arrow_rounded
+                      : Icons.pause_rounded,
                 ),
               ),
               const SizedBox(width: 4),

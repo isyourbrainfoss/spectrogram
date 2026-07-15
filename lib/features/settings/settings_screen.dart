@@ -106,6 +106,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   .toList(),
             ),
           ),
+          ListTile(
+            title: const Text('Frequency scale'),
+            subtitle: Text(
+              s.freqScale == FreqScale.logarithmic
+                  ? 'Logarithmic — more space for low frequencies (typical for audio)'
+                  : 'Linear — equal Hz spacing',
+            ),
+            trailing: DropdownButton<FreqScale>(
+              value: s.freqScale,
+              onChanged: (v) {
+                if (v != null) _apply(s.copyWith(freqScale: v));
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: FreqScale.logarithmic,
+                  child: Text('Log'),
+                ),
+                DropdownMenuItem(
+                  value: FreqScale.linear,
+                  child: Text('Linear'),
+                ),
+              ],
+            ),
+          ),
           const _SectionHeader('Audio & FFT'),
           ListTile(
             title: const Text('Sample rate'),

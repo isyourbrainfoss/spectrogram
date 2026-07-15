@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:spectrogram/dsp/colormap.dart';
+import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/dsp/pcm.dart';
 import 'package:spectrogram/dsp/stft_processor.dart';
 import 'package:spectrogram/models/app_settings.dart';
@@ -86,12 +87,18 @@ class SpectrogramEngine extends ChangeNotifier {
         _settings.timeWindowSec != next.timeWindowSec ||
         _settings.minFreqHz != next.minFreqHz ||
         _settings.maxFreqHz != next.maxFreqHz;
+    // Freq scale only remaps display — no capture restart needed.
     final wasRunning = isRunning;
     if (restart && wasRunning) {
       await stop();
     }
     _settings = next;
-    _rebuildPipeline();
+    if (restart) {
+      _rebuildPipeline();
+    } else {
+      // Colormap / scale / dB range can update live.
+      _colorMap = ColorMap.of(_settings.colormap);
+    }
     if (restart && wasRunning) {
       await start();
     } else {
@@ -171,13 +178,16 @@ class SpectrogramEngine extends ChangeNotifier {
 
   Future<void> stop() async {
     await _capture.stop();
+    _frozen = false;
     if (_status != EngineStatus.noPermission) {
       _status = EngineStatus.idle;
     }
     notifyListeners();
   }
 
+  /// Pause plot updates while keeping the mic stream open (only while running).
   void toggleFreeze() {
+    if (!isRunning) return;
     _frozen = !_frozen;
     notifyListeners();
   }
@@ -235,16 +245,20 @@ class SpectrogramEngine extends ChangeNotifier {
   }
 
   /// Spectrogram sample: [normX] 0=oldest … 1=newest,
-  /// [normY] 0=minFreq … 1=maxFreq.
+  /// [normY] 0=minFreq … 1=maxFreq (honours linear/log scale).
   ({double freqHz, double db, int colAge, int binIndex})? sampleSpectrogram({
     required double normX,
     required double normY,
   }) {
     if (_filled == 0 || displayBins == 0) return null;
     final age = (normX.clamp(0.0, 1.0) * (_filled - 1)).round();
-    final binIndex = (normY.clamp(0.0, 1.0) * (displayBins - 1))
-        .round()
-        .clamp(0, displayBins - 1);
+    final hz = FreqAxis.normToFreq(
+      normY,
+      _settings.minFreqHz,
+      _settings.maxFreqHz,
+      _settings.freqScale,
+    );
+    final binIndex = FreqAxis.binForFreq(_displayFreqs, hz);
     final db = dbColumnAt(age)[binIndex];
     return (
       freqHz: _displayFreqs[binIndex],
@@ -254,12 +268,16 @@ class SpectrogramEngine extends ChangeNotifier {
     );
   }
 
-  /// Spectrum sample: [normX] 0=minFreq … 1=maxFreq.
+  /// Spectrum sample: [normX] 0=minFreq … 1=maxFreq (honours linear/log scale).
   ({double freqHz, double db, int binIndex})? sampleSpectrum(double normX) {
     if (displayBins == 0) return null;
-    final binIndex = (normX.clamp(0.0, 1.0) * (displayBins - 1))
-        .round()
-        .clamp(0, displayBins - 1);
+    final hz = FreqAxis.normToFreq(
+      normX,
+      _settings.minFreqHz,
+      _settings.maxFreqHz,
+      _settings.freqScale,
+    );
+    final binIndex = FreqAxis.binForFreq(_displayFreqs, hz);
     return (
       freqHz: _displayFreqs[binIndex],
       db: _displayDb[binIndex],
