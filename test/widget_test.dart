@@ -21,7 +21,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(AppConstants.appName), findsWidgets);
-    expect(find.text('Start mic'), findsOneWidget);
+    expect(find.text('Start'), findsOneWidget);
     expect(find.text('Live'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
 

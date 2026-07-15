@@ -39,7 +39,6 @@ class SpectrogramEngine extends ChangeNotifier {
 
   EngineStatus _status = EngineStatus.idle;
   String? _errorMessage;
-  bool _frozen = false;
   bool _disposed = false;
 
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
@@ -52,7 +51,6 @@ class SpectrogramEngine extends ChangeNotifier {
   EngineStatus get status => _status;
   String? get errorMessage => _errorMessage;
   bool get isRunning => _status == EngineStatus.running;
-  bool get frozen => _frozen;
   double? get peakFreqHz => _peakFreqHz;
   double? get peakDb => _peakDb;
 
@@ -157,7 +155,6 @@ class SpectrogramEngine extends ChangeNotifier {
 
     try {
       _processor.reset();
-      _frozen = false;
       await _capture.start(
         sampleRate: _settings.sampleRate,
         onPcm: _onPcm,
@@ -178,17 +175,11 @@ class SpectrogramEngine extends ChangeNotifier {
 
   Future<void> stop() async {
     await _capture.stop();
-    _frozen = false;
     if (_status != EngineStatus.noPermission) {
       _status = EngineStatus.idle;
     }
-    notifyListeners();
-  }
-
-  /// Pause plot updates while keeping the mic stream open (only while running).
-  void toggleFreeze() {
-    if (!isRunning) return;
-    _frozen = !_frozen;
+    // History + last spectrum stay in memory so the user can place a crosshair
+    // after stopping (no separate freeze control).
     notifyListeners();
   }
 
@@ -205,7 +196,7 @@ class SpectrogramEngine extends ChangeNotifier {
   }
 
   void _onPcm(Uint8List bytes) {
-    if (_disposed || _frozen) return;
+    if (_disposed) return;
     final samples = pcm16ToMonoFloat(bytes);
     if (samples.isEmpty) return;
 

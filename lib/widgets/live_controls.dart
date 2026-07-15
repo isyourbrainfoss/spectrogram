@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:spectrogram/features/plot/axis_labels.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
 
-/// Compact start/stop, freeze, clear-crosshair controls + peak chips.
+/// Start/stop mic, clear history/crosshair, and peak chips.
+///
+/// Stopping capture leaves the last spectrogram on screen so you can place a
+/// crosshair and read exact Hz / dBFS without a separate freeze control.
 class LiveControls extends StatelessWidget {
   const LiveControls({
     super.key,
@@ -18,6 +21,7 @@ class LiveControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final running = engine.isRunning;
+    final hasData = engine.filledColumns > 0;
     final scheme = Theme.of(context).colorScheme;
 
     return Padding(
@@ -25,7 +29,7 @@ class LiveControls extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (engine.peakFreqHz != null && running)
+          if (engine.peakFreqHz != null && hasData)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Wrap(
@@ -43,10 +47,10 @@ class LiveControls extends StatelessWidget {
                     label: formatDb(engine.peakDb ?? engine.settings.minDb),
                     color: scheme.secondary,
                   ),
-                  if (engine.frozen)
+                  if (!running)
                     _Chip(
-                      icon: Icons.pause_circle_filled,
-                      label: 'Frozen',
+                      icon: Icons.pan_tool_alt_rounded,
+                      label: 'Stopped — tap plot for readout',
                       color: scheme.outline,
                     ),
                 ],
@@ -64,29 +68,13 @@ class LiveControls extends StatelessWidget {
                     }
                   },
                   icon: Icon(running ? Icons.stop_rounded : Icons.mic_rounded),
-                  label: Text(running ? 'Stop mic' : 'Start mic'),
+                  label: Text(running ? 'Stop' : 'Start'),
                 ),
               ),
               const SizedBox(width: 8),
-              // Freeze = pause the plot while the mic stays open (inspect with
-              // crosshair). Only meaningful while capture is running.
-              IconButton.filledTonal(
-                tooltip: !running
-                    ? 'Freeze (start mic first)'
-                    : engine.frozen
-                        ? 'Resume plot'
-                        : 'Freeze plot (mic stays on)',
-                onPressed: running ? engine.toggleFreeze : null,
-                icon: Icon(
-                  engine.frozen
-                      ? Icons.play_arrow_rounded
-                      : Icons.pause_rounded,
-                ),
-              ),
-              const SizedBox(width: 4),
               IconButton.filledTonal(
                 tooltip: 'Clear history',
-                onPressed: engine.filledColumns > 0 ? engine.clearHistory : null,
+                onPressed: hasData ? engine.clearHistory : null,
                 icon: const Icon(Icons.layers_clear_rounded),
               ),
               const SizedBox(width: 4),
