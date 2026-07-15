@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:spectrogram/core/constants.dart';
 import 'package:spectrogram/core/theme/spectrogram_theme.dart';
+import 'package:spectrogram/features/home/home_screen.dart';
 import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/settings_repository.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
-import 'package:spectrogram/shell/adaptive_shell.dart';
 
 class SpectrogramApp extends StatefulWidget {
   const SpectrogramApp({
@@ -47,7 +47,7 @@ class _SpectrogramAppState extends State<SpectrogramApp> {
       theme: SpectrogramTheme.light(),
       darkTheme: SpectrogramTheme.dark(),
       themeMode: _themeMode,
-      home: AdaptiveShell(
+      home: HomeScreen(
         engine: widget.engine,
         repository: widget.repository,
         onSettingsChanged: _onSettingsChanged,

@@ -75,8 +75,8 @@ class PlotChrome extends StatelessWidget {
     required this.xMaxLabel,
     this.xMidLabel,
     this.xTicks,
-    this.yAxisWidth = 48,
-    this.xAxisHeight = 22,
+    this.yAxisWidth = 42,
+    this.xAxisHeight = 18,
     this.yAxisTitle,
   });
 
