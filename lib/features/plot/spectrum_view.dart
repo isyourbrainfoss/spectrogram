@@ -9,7 +9,10 @@ import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
 
 /// Live frequency vs amplitude (dBFS) spectrum plot with optional crosshair.
-class SpectrumView extends StatelessWidget {
+///
+/// Listens to [engine] so it stays current when kept alive under an
+/// [IndexedStack] (STFT/FFT toggle) without relying on parent rebuilds alone.
+class SpectrumView extends StatefulWidget {
   const SpectrumView({
     super.key,
     required this.engine,
@@ -21,20 +24,51 @@ class SpectrumView extends StatelessWidget {
   final CrosshairPoint? crosshair;
   final ValueChanged<CrosshairPoint?>? onCrosshairChanged;
 
+  @override
+  State<SpectrumView> createState() => _SpectrumViewState();
+}
+
+class _SpectrumViewState extends State<SpectrumView> {
+  @override
+  void initState() {
+    super.initState();
+    widget.engine.addListener(_onEngine);
+  }
+
+  @override
+  void didUpdateWidget(covariant SpectrumView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.engine != widget.engine) {
+      oldWidget.engine.removeListener(_onEngine);
+      widget.engine.addListener(_onEngine);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.engine.removeListener(_onEngine);
+    super.dispose();
+  }
+
+  void _onEngine() {
+    if (mounted) setState(() {});
+  }
+
   void _handleLocal(Offset local, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
     final nx = (local.dx / size.width).clamp(0.0, 1.0);
-    final sample = engine.sampleSpectrum(nx);
-    final s = engine.settings;
+    final sample = widget.engine.sampleSpectrum(nx);
+    final s = widget.engine.settings;
     final span = (s.maxDb - s.minDb).abs();
     final ny = sample == null || span < 1e-9
         ? (1.0 - local.dy / size.height).clamp(0.0, 1.0)
         : ((sample.db - s.minDb) / span).clamp(0.0, 1.0);
-    onCrosshairChanged?.call(CrosshairPoint(nx: nx, ny: ny));
+    widget.onCrosshairChanged?.call(CrosshairPoint(nx: nx, ny: ny));
   }
 
   @override
   Widget build(BuildContext context) {
+    final engine = widget.engine;
     final s = engine.settings;
     final scheme = Theme.of(context).colorScheme;
     final yTicks = dbAxisTicks(minDb: s.minDb, maxDb: s.maxDb, count: 5);
@@ -45,10 +79,13 @@ class SpectrumView extends StatelessWidget {
       maxTicks: 7,
     );
 
+    // Snapshot so paint is stable for this frame.
+    final db = Float32List.fromList(engine.displayDb);
+    final freqs = Float32List.fromList(engine.displayFreqs);
+
     return PlotChrome(
       yTicks: [
-        for (final t in yTicks)
-          AxisTick(norm: t.norm, label: '${t.label} dB'),
+        for (final t in yTicks) AxisTick(norm: t.norm, label: '${t.label} dB'),
       ],
       yAxisTitle: 'dBFS',
       xMinLabel: formatFrequency(s.minFreqHz),
@@ -57,6 +94,9 @@ class SpectrumView extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final size = Size(constraints.maxWidth, constraints.maxHeight);
+          if (size.width <= 0 || size.height <= 0) {
+            return const SizedBox.expand();
+          }
           return Listener(
             onPointerDown: (ev) => _handleLocal(ev.localPosition, size),
             onPointerMove: (ev) {
@@ -64,7 +104,7 @@ class SpectrumView extends StatelessWidget {
             },
             child: MouseRegion(
               onHover: (ev) {
-                if (crosshair != null) {
+                if (widget.crosshair != null) {
                   _handleLocal(ev.localPosition, size);
                 }
               },
@@ -74,8 +114,8 @@ class SpectrumView extends StatelessWidget {
                   RepaintBoundary(
                     child: CustomPaint(
                       painter: _SpectrumPainter(
-                        db: Float32List.fromList(engine.displayDb),
-                        freqs: Float32List.fromList(engine.displayFreqs),
+                        db: db,
+                        freqs: freqs,
                         minDb: s.minDb,
                         maxDb: s.maxDb,
                         minHz: s.minFreqHz,
@@ -86,14 +126,18 @@ class SpectrumView extends StatelessWidget {
                         fillColor: scheme.primary.withValues(alpha: 0.22),
                         gridColor: scheme.outline.withValues(alpha: 0.25),
                         bgColor: scheme.surfaceContainerHighest,
+                        layoutSize: size,
                       ),
                       size: size,
+                      isComplex: true,
+                      willChange: engine.isRunning,
                     ),
                   ),
-                  if (crosshair != null)
+                  if (widget.crosshair != null)
                     Builder(
                       builder: (context) {
-                        final sample = engine.sampleSpectrum(crosshair!.nx);
+                        final sample =
+                            engine.sampleSpectrum(widget.crosshair!.nx);
                         if (sample == null) return const SizedBox.shrink();
                         final span = (s.maxDb - s.minDb).abs();
                         final ny = span < 1e-9
@@ -138,6 +182,7 @@ class _SpectrumPainter extends CustomPainter {
     required this.fillColor,
     required this.gridColor,
     required this.bgColor,
+    required this.layoutSize,
   });
 
   final Float32List db;
@@ -152,9 +197,11 @@ class _SpectrumPainter extends CustomPainter {
   final Color fillColor;
   final Color gridColor;
   final Color bgColor;
+  final Size layoutSize;
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
     canvas.drawRect(Offset.zero & size, Paint()..color = bgColor);
 
     final gridPaint = Paint()
@@ -208,7 +255,8 @@ class _SpectrumPainter extends CustomPainter {
         old.minDb != minDb ||
         old.maxDb != maxDb ||
         old.scale != scale ||
-        old.lineColor != lineColor) {
+        old.lineColor != lineColor ||
+        old.layoutSize != layoutSize) {
       return true;
     }
     for (var i = 0; i < db.length; i++) {

@@ -94,21 +94,34 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: Stack(
                 children: [
+                  // Keep both plots mounted so STFT/FFT toggle and rotation
+                  // do not dispose the spectrogram bitmap / spectrum state.
                   Padding(
                     padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
-                    child: _mode == PlotViewMode.spectrogram
-                        ? SpectrogramView(
-                            engine: engine,
-                            crosshair: _crosshair,
-                            onCrosshairChanged: (p) =>
-                                setState(() => _crosshair = p),
-                          )
-                        : SpectrumView(
-                            engine: engine,
-                            crosshair: _crosshair,
-                            onCrosshairChanged: (p) =>
-                                setState(() => _crosshair = p),
-                          ),
+                    child: IndexedStack(
+                      index: _mode == PlotViewMode.spectrogram ? 0 : 1,
+                      sizing: StackFit.expand,
+                      children: [
+                        SpectrogramView(
+                          key: const ValueKey('plot-stft'),
+                          engine: engine,
+                          crosshair: _mode == PlotViewMode.spectrogram
+                              ? _crosshair
+                              : null,
+                          onCrosshairChanged: (p) =>
+                              setState(() => _crosshair = p),
+                        ),
+                        SpectrumView(
+                          key: const ValueKey('plot-fft'),
+                          engine: engine,
+                          crosshair: _mode == PlotViewMode.spectrum
+                              ? _crosshair
+                              : null,
+                          onCrosshairChanged: (p) =>
+                              setState(() => _crosshair = p),
+                        ),
+                      ],
+                    ),
                   ),
                   // Minimal chrome overlaid on the plot.
                   Positioned(
