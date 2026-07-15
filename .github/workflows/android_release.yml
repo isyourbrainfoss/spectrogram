@@ -1,7 +1,10 @@
 name: Android Release
 
+# Publish arm64 APK + Obtainium version.json on every main push (Flowlog-style).
+# Tag pushes (v*) also create a named GitHub Release.
 on:
   push:
+    branches: [main]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -12,7 +15,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: android-pages
   cancel-in-progress: false
 
 jobs:
@@ -63,24 +66,40 @@ jobs:
       - name: Test
         run: flutter test
 
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            VERSION_CODE=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f2)
+            # Prefer run_number so Obtainium always sees a monotonic code on rebuilds.
+            if [ -z "$VERSION_CODE" ] || [ "$VERSION_CODE" = "1" ]; then
+              VERSION_CODE="${{ github.run_number }}"
+            fi
+          else
+            VERSION="build-${{ github.run_number }}"
+            VERSION_CODE="${{ github.run_number }}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Using version=$VERSION versionCode=$VERSION_CODE"
+
       - name: Build release APK (arm64)
-        run: flutter build apk --release --target-platform android-arm64
+        run: |
+          flutter build apk --release --target-platform android-arm64 \
+            --build-name="$VERSION" \
+            --build-number="$VERSION_CODE"
 
       - name: Prepare release assets
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ "$VERSION" = "$GITHUB_REF_NAME" ] || [ -z "$VERSION" ]; then
-            VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
-          fi
-          VERSION_CODE=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f2)
           APK=build/app/outputs/flutter-apk/app-release.apk
           cp "$APK" "spectrogram-${VERSION}-arm64-v8a.apk"
           cp "$APK" spectrogram-arm64-v8a.apk
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           ls -lh spectrogram-*.apk
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release (tags)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
@@ -88,12 +107,41 @@ jobs:
             spectrogram-*-arm64-v8a.apk
             spectrogram-arm64-v8a.apk
           generate_release_notes: true
+          body: |
+            **Obtainium (recommended):** add this Standard JSON URL:
+            ```
+            https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/version.json
+            ```
 
-      - name: Prepare GitHub Pages site
+      - name: Publish GitHub Release (main builds)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          body: |
+            Automated Android build for commit ${{ github.sha }}.
+
+            **Obtainium (recommended):** Direct APK Link → Standard JSON:
+            ```
+            https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/version.json
+            ```
+
+            **Linux Flatpak:**
+            ```
+            flatpak remote-add --if-not-exists --user spectrogram \
+              https://isyourbrainfoss.github.io/spectrogram/spectrogram.flatpakrepo
+            flatpak install --user spectrogram com.isyourbrainfoss.Spectrogram
+            ```
+          files: |
+            spectrogram-arm64-v8a.apk
+            spectrogram-${{ env.VERSION }}-arm64-v8a.apk
+          fail_on_unmatched_files: false
+
+      - name: Prepare GitHub Pages site (Obtainium mirror)
         run: bash tool/prepare_pages_site.sh spectrogram-arm64-v8a.apk "$VERSION" "$VERSION_CODE" site
 
       - name: Deploy to GitHub Pages
-        if: startsWith(github.ref, 'refs/tags/')
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
