@@ -238,6 +238,16 @@ class SpectrogramEngine extends ChangeNotifier {
   /// Seconds per spectrogram column (hop duration).
   double get secondsPerColumn => _settings.hopSize / _settings.sampleRate;
 
+  /// Inclusive column index: normX=0 → oldest, normX=1 → newest.
+  int _columnAgeFromNormX(double normX) {
+    if (_filled <= 1) return 0;
+    final t = normX.clamp(0.0, 1.0);
+    if (t >= 1.0) return _filled - 1;
+    if (t <= 0.0) return 0;
+    // floor(t * filled) covers the full last column once t is in the final bin.
+    return (t * _filled).floor().clamp(0, _filled - 1);
+  }
+
   /// Spectrogram sample: [normX] 0=oldest … 1=newest,
   /// [normY] 0=minFreq … 1=maxFreq (honours linear/log scale).
   ///
@@ -253,7 +263,8 @@ class SpectrogramEngine extends ChangeNotifier {
     required double normY,
   }) {
     if (_filled == 0 || displayBins == 0) return null;
-    final age = (normX.clamp(0.0, 1.0) * (_filled - 1)).round();
+    // Map [0,1] onto columns so 0 = oldest and 1 = newest (right edge).
+    final age = _columnAgeFromNormX(normX);
     final hz = FreqAxis.normToFreq(
       normY,
       _settings.minFreqHz,

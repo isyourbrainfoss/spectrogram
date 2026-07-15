@@ -151,35 +151,21 @@ class CrosshairOverlay extends StatelessWidget {
     required double plotH,
     Offset? finger,
   }) {
-    // Prefer above-left of crosshair; flip if near edges or finger is there.
-    final preferAbove = finger == null || finger.dy >= crossY;
-    var left = crossX + 16;
-    var top = preferAbove ? crossY - _clearance - _chipH : crossY + _clearance;
+    // Prefer above the crosshair; if finger is above it, put chip below.
+    final fingerAbove =
+        finger != null && finger.dy < crossY - 8;
+    var left = crossX - _chipW / 2;
+    var top = fingerAbove ? crossY + _clearance : crossY - _clearance - _chipH;
 
-    // If finger is known, push chip to the opposite quadrant from the finger.
-    if (finger != null) {
-      final awayX = finger.dx < crossX ? 1.0 : -1.0;
-      final awayY = finger.dy < crossY ? 1.0 : -1.0;
-      left = crossX + awayX * _clearance * 0.35;
-      top = crossY + awayY * _clearance;
-      // Prefer vertical separation (finger usually below target on phones).
-      if ((finger.dy - crossY).abs() < _clearance) {
-        top = crossY - _clearance - _chipH;
-        if (top < 4) top = crossY + _clearance;
-      }
+    // Keep clear of finger horizontally if they overlap a lot.
+    if (finger != null && (finger.dx - crossX).abs() < _chipW * 0.6) {
+      left = finger.dx < plotW / 2 ? crossX + 20 : crossX - _chipW - 20;
     }
 
     if (left + _chipW > plotW - 4) left = plotW - _chipW - 4;
     if (left < 4) left = 4;
     if (top + _chipH > plotH - 4) top = plotH - _chipH - 4;
     if (top < 4) top = 4;
-
-    // Final check: if still too close to crosshair, snap to top-center band.
-    final chipCenter = Offset(left + _chipW / 2, top + _chipH / 2);
-    if ((chipCenter - Offset(crossX, crossY)).distance < _clearance * 0.85) {
-      left = (plotW - _chipW) / 2;
-      top = 8;
-    }
 
     return Offset(left, top);
   }

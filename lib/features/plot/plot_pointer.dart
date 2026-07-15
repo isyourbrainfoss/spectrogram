@@ -2,14 +2,15 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:spectrogram/features/plot/crosshair_overlay.dart';
 
-/// Maps pointer events to a [CrosshairPoint] with touch offset + relative drag.
+/// Maps pointer events to a [CrosshairPoint].
 ///
-/// Touch/stylus: crosshair sits above the finger so the fingertip does not
-/// cover the sample point. Long-press then drag moves the crosshair by the
-/// same delta as the finger (relative grab), so edges stay reachable.
+/// * Normal tap/drag: crosshair sits **exactly** under the finger/cursor.
+/// * Long-press drag: **relative** grab — crosshair moves by the same delta as
+///   the finger from the press point (optional lift above finger on long-press
+///   start so the sample stays visible). Full range including right edge.
 class PlotPointerController {
-  /// Lift of crosshair above a touch point (logical pixels).
-  static const touchLift = 72.0;
+  /// Vertical lift only while long-pressing (logical pixels).
+  static const longPressLift = 64.0;
 
   Offset? fingerLocal;
   bool _dragging = false;
@@ -18,6 +19,7 @@ class PlotPointerController {
   Offset? _grabCrosshairPx;
 
   bool get isDragging => _dragging;
+  bool get isRelativeMode => _relativeMode;
 
   void reset() {
     fingerLocal = null;
@@ -27,53 +29,38 @@ class PlotPointerController {
     _grabCrosshairPx = null;
   }
 
+  /// Inclusive mapping so x==width / y==0 reach the true edges (nx/ny = 0 or 1).
   CrosshairPoint localToPoint(Offset local, Size size) {
     if (size.width <= 0 || size.height <= 0) {
       return const CrosshairPoint(nx: 0.5, ny: 0.5);
     }
-    final nx = (local.dx / size.width).clamp(0.0, 1.0);
-    final ny = (1.0 - local.dy / size.height).clamp(0.0, 1.0);
+    final x = local.dx.clamp(0.0, size.width);
+    final y = local.dy.clamp(0.0, size.height);
+    final nx = size.width == 0 ? 0.0 : (x / size.width).clamp(0.0, 1.0);
+    final ny = size.height == 0 ? 0.0 : (1.0 - y / size.height).clamp(0.0, 1.0);
     return CrosshairPoint(nx: nx, ny: ny);
   }
 
   Offset pointToLocal(CrosshairPoint p, Size size) {
+    final nx = p.nx.clamp(0.0, 1.0);
+    final ny = p.ny.clamp(0.0, 1.0);
+    return Offset(nx * size.width, (1.0 - ny) * size.height);
+  }
+
+  /// Lift used only for long-press precision mode (above finger, adapt near top).
+  Offset _longPressLift(Offset finger, Size size) {
+    var dy = -longPressLift;
+    if (finger.dy + dy < 8) {
+      dy = longPressLift; // flip below near top
+    }
+    // No horizontal shift — that blocked the rightmost (newest) columns.
     return Offset(
-      p.nx.clamp(0.0, 1.0) * size.width,
-      (1.0 - p.ny.clamp(0.0, 1.0)) * size.height,
+      finger.dx.clamp(0.0, size.width),
+      (finger.dy + dy).clamp(0.0, size.height),
     );
   }
 
-  /// Offset from finger → crosshair for touch (adaptive near edges).
-  Offset touchOffset(Offset finger, Size size) {
-    // Default: above the finger.
-    var dx = 0.0;
-    var dy = -touchLift;
-
-    // Near top: place below instead so crosshair stays in-plot.
-    if (finger.dy + dy < 12) {
-      dy = touchLift;
-    }
-    // Bias horizontally away from left/right edges.
-    if (finger.dx < size.width * 0.2) {
-      dx = 28;
-    } else if (finger.dx > size.width * 0.8) {
-      dx = -28;
-    }
-    return Offset(dx, dy);
-  }
-
-  Offset _applyTouchLift(Offset finger, Size size, PointerDeviceKind kind) {
-    if (kind == PointerDeviceKind.mouse || kind == PointerDeviceKind.trackpad) {
-      return finger;
-    }
-    final off = touchOffset(finger, size);
-    return Offset(
-      (finger.dx + off.dx).clamp(0.0, size.width),
-      (finger.dy + off.dy).clamp(0.0, size.height),
-    );
-  }
-
-  /// Tap / simple drag (with touch lift).
+  /// Normal tap / drag: exact placement under the pointer.
   CrosshairPoint onPointerDown(
     Offset local,
     Size size,
@@ -82,9 +69,13 @@ class PlotPointerController {
   }) {
     fingerLocal = local;
     _dragging = true;
-    _relativeMode = false;
-    final target = _applyTouchLift(local, size, kind);
-    return localToPoint(target, size);
+    // Do not clear relative mode here if long-press may follow the same down.
+    // Relative mode is entered only via [onLongPressStart].
+    if (!_relativeMode) {
+      _grabFinger = null;
+      _grabCrosshairPx = null;
+    }
+    return localToPoint(local, size);
   }
 
   CrosshairPoint? onPointerMove(
@@ -96,18 +87,14 @@ class PlotPointerController {
     fingerLocal = local;
     if (!_dragging) return null;
 
+    // Once long-press has engaged relative mode, keep using relative deltas
+    // (Listener also gets move events during long-press).
     if (_relativeMode && _grabFinger != null && _grabCrosshairPx != null) {
-      final delta = local - _grabFinger!;
-      final next = _grabCrosshairPx! + delta;
-      final clamped = Offset(
-        next.dx.clamp(0.0, size.width),
-        next.dy.clamp(0.0, size.height),
-      );
-      return localToPoint(clamped, size);
+      return _relativePoint(local, size);
     }
 
-    final target = _applyTouchLift(local, size, kind);
-    return localToPoint(target, size);
+    // Normal drag: exact under finger.
+    return localToPoint(local, size);
   }
 
   void onPointerUp() {
@@ -115,10 +102,9 @@ class PlotPointerController {
     _relativeMode = false;
     _grabFinger = null;
     _grabCrosshairPx = null;
-    // Keep last fingerLocal briefly for readout placement; clear next frame ok.
   }
 
-  /// Long-press: enter relative-drag mode from current (or place with lift).
+  /// Long-press: lift crosshair above finger, then drag relatively.
   CrosshairPoint onLongPressStart(
     Offset local,
     Size size,
@@ -130,13 +116,11 @@ class PlotPointerController {
     _relativeMode = true;
     _grabFinger = local;
 
-    final CrosshairPoint start;
-    if (existing != null) {
-      start = existing;
-    } else {
-      start = localToPoint(_applyTouchLift(local, size, kind), size);
-    }
-    _grabCrosshairPx = pointToLocal(start, size);
+    // Start from lifted position so the sample is visible above the fingertip.
+    // Relative deltas still reach every edge including the rightmost column.
+    final startPx = _longPressLift(local, size);
+    final start = localToPoint(startPx, size);
+    _grabCrosshairPx = startPx;
     return start;
   }
 
@@ -149,8 +133,13 @@ class PlotPointerController {
     if (!_relativeMode || _grabFinger == null || _grabCrosshairPx == null) {
       return null;
     }
+    return _relativePoint(local, size);
+  }
+
+  CrosshairPoint _relativePoint(Offset local, Size size) {
     final delta = local - _grabFinger!;
     final next = _grabCrosshairPx! + delta;
+    // Inclusive clamp so we can hit exactly the right/bottom edges.
     final clamped = Offset(
       next.dx.clamp(0.0, size.width),
       next.dy.clamp(0.0, size.height),
