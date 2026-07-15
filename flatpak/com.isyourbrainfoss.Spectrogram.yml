@@ -1,0 +1,56 @@
+app-id: com.isyourbrainfoss.Spectrogram
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+command: spectrogram
+separate-locales: false
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  # Microphone via PipeWire/PulseAudio (record_linux uses parecord/pactl)
+  - --socket=pulseaudio
+  - --talk-name=org.freedesktop.Notifications
+modules:
+  - name: pulse-tools
+    buildsystem: simple
+    build-commands:
+      # Host-built tools staged by build-flatpak.sh (parecord + pactl + libs).
+      - |
+        if [ -d pulse-tools ]; then
+          mkdir -p /app/bin /app/lib
+          if [ -d pulse-tools/bin ]; then
+            cp -a pulse-tools/bin/* /app/bin/ || true
+          fi
+          if [ -d pulse-tools/lib ]; then
+            cp -a pulse-tools/lib/* /app/lib/ || true
+          fi
+        fi
+    sources:
+      - type: dir
+        path: pulse-tools
+        dest: pulse-tools
+  - name: spectrogram
+    buildsystem: simple
+    build-commands:
+      # Flutter resolves libapp.so / flutter_assets relative to the binary
+      # ($executable_dir/lib and $executable_dir/data).
+      - install -Dm755 bundle/spectrogram /app/bin/spectrogram
+      - cp -ra bundle/lib /app/bin/
+      - cp -ra bundle/data /app/bin/
+      - install -Dm644 com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/128x128/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/64x64/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/512x512/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 com.isyourbrainfoss.Spectrogram.desktop /app/share/applications/com.isyourbrainfoss.Spectrogram.desktop
+      - install -Dm644 com.isyourbrainfoss.Spectrogram.metainfo.xml /app/share/metainfo/com.isyourbrainfoss.Spectrogram.metainfo.xml
+    sources:
+      - type: archive
+        path: spectrogram-linux-bundle.tar.gz
+        dest: bundle
+      - type: file
+        path: com.isyourbrainfoss.Spectrogram.png
+      - type: file
+        path: com.isyourbrainfoss.Spectrogram.desktop
+      - type: file
+        path: com.isyourbrainfoss.Spectrogram.metainfo.xml

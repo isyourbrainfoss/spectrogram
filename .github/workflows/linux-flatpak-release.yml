@@ -1,0 +1,163 @@
+name: Linux Flatpak Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flatpak-pages
+  cancel-in-progress: true
+
+jobs:
+  build-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev \
+            libblkid-dev liblzma-dev libsecret-1-dev \
+            pulseaudio-utils \
+            flatpak flatpak-builder
+
+      - name: Install GNOME SDK
+        run: |
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Flatpak (x86_64)
+        env:
+          REPO_DIR: ${{ github.workspace }}/flatpak-pages-repo
+        run: |
+          mkdir -p "$REPO_DIR"
+          ./flatpak/build-flatpak.sh x86_64
+
+      - name: Upload x86_64 repo
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-repo-x86_64
+          path: flatpak-pages-repo
+
+      - name: Upload x86_64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle-x86_64
+          path: flatpak/com.isyourbrainfoss.Spectrogram-x86_64.flatpak
+
+  build-aarch64:
+    needs: build-x86_64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev \
+            libblkid-dev liblzma-dev libsecret-1-dev \
+            pulseaudio-utils \
+            flatpak flatpak-builder
+
+      - name: Install GNOME SDK
+        run: |
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48
+
+      # flutter-action has no prebuilt ARM64 SDK archives; clone instead.
+      - name: Set up Flutter
+        run: |
+          FLUTTER_ROOT="${RUNNER_TOOL_CACHE}/flutter"
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$FLUTTER_ROOT"
+          echo "${FLUTTER_ROOT}/bin" >> "$GITHUB_PATH"
+          export PATH="${FLUTTER_ROOT}/bin:$PATH"
+          flutter config --no-analytics
+          flutter precache --linux
+          flutter --version
+
+      - name: Download x86_64 repo
+        uses: actions/download-artifact@v4
+        with:
+          name: flatpak-repo-x86_64
+          path: flatpak-pages-repo
+
+      - name: Build Flatpak (aarch64)
+        env:
+          REPO_DIR: ${{ github.workspace }}/flatpak-pages-repo
+        run: ./flatpak/build-flatpak.sh aarch64
+
+      - name: Upload combined repo
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-repo
+          path: flatpak-pages-repo
+
+      - name: Upload aarch64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle-aarch64
+          path: flatpak/com.isyourbrainfoss.Spectrogram-aarch64.flatpak
+
+  publish:
+    needs: build-aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download combined Flatpak repo
+        uses: actions/download-artifact@v4
+        with:
+          name: flatpak-repo
+          path: site/repo
+
+      - name: Add flatpakrepo + .nojekyll
+        run: |
+          cp flatpak/spectrogram.flatpakrepo site/spectrogram.flatpakrepo
+          touch site/.nojekyll
+
+      - name: Deploy Flatpak repo to gh-pages (merge with Android mirror)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
+          publish_branch: gh-pages
+          keep_files: true
+          enable_jekyll: false
+
+      - name: Download Flatpak bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: flatpak-bundle-*
+          path: bundles
+          merge-multiple: true
+
+      - name: Upload Flatpak bundles to latest matching release (if any)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh release list --repo "${{ github.repository }}" --limit 5 --json tagName -q '.[0].tagName' 2>/dev/null || true)
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No GitHub release yet — skip bundle attach."
+            exit 0
+          fi
+          gh release upload "$TAG" \
+            bundles/com.isyourbrainfoss.Spectrogram-x86_64.flatpak \
+            bundles/com.isyourbrainfoss.Spectrogram-aarch64.flatpak \
+            --clobber \
+            --repo "${{ github.repository }}" || true

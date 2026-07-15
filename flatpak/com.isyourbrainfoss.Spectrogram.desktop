@@ -7,3 +7,4 @@ Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Science;
 StartupWMClass=spectrogram
+Keywords=audio;fft;spectrum;microphone;

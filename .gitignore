@@ -46,5 +46,19 @@ app.*.map.json
 # Linux
 **/linux/flutter/ephemeral
 
+# Flatpak build artifacts
+flatpak/build-*/
+flatpak/repo/
+flatpak/pulse-tools/
+flatpak/spectrogram-linux-bundle.tar.gz
+flatpak/com.isyourbrainfoss.Spectrogram-*.flatpak
+flatpak/com.isyourbrainfoss.Spectrogram.png
+flatpak-build/
+.flatpak-builder/
+spectrogram.flatpakrepo
+repo/
+
 # Exceptions
 !**/doc/api/
+!flatpak/spectrogram.flatpakrepo
+

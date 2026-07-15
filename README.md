@@ -32,9 +32,39 @@ https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://raw.gi
 
 APKs are also attached to [GitHub Releases](https://github.com/isyourbrainfoss/spectrogram/releases) (`v*` tags).
 
-### Linux
+### Linux (Flatpak — recommended)
 
-**Dependencies** (for microphone capture via the `record` plugin):
+Add the remote and install (same pattern as Flowlog / Progressor):
+
+```bash
+flatpak remote-add --if-not-exists --user spectrogram \
+  https://isyourbrainfoss.github.io/spectrogram/spectrogram.flatpakrepo
+flatpak install --user spectrogram com.isyourbrainfoss.Spectrogram
+flatpak run com.isyourbrainfoss.Spectrogram
+```
+
+CI publishes the ostree repo under `gh-pages/repo` on every push to `main`. Single-file `.flatpak` bundles are attached to releases when available.
+
+**Build Flatpak locally:**
+
+```bash
+# needs: flatpak, flatpak-builder, flutter, pulseaudio-utils
+./flatpak/build-flatpak.sh          # current arch
+./flatpak/build-flatpak.sh x86_64
+./flatpak/build-flatpak.sh aarch64
+```
+
+Local remote for testing:
+
+```bash
+flatpak --user remote-add --if-not-exists --no-gpg-verify spectrogram-local \
+  file://$(pwd)/flatpak/repo
+flatpak install --user spectrogram-local com.isyourbrainfoss.Spectrogram
+```
+
+### Linux (from source)
+
+**Dependencies** (microphone capture via the `record` plugin):
 
 ```bash
 # Debian/Ubuntu
@@ -49,16 +79,9 @@ sudo pacman -S libpulse ffmpeg
 
 PipeWire users: `pulseaudio-utils` / `parecord` still work via the Pulse compatibility layer.
 
-**Run from source:**
-
 ```bash
 flutter pub get
 flutter run -d linux
-```
-
-**Release bundle:**
-
-```bash
 flutter build linux --release
 # binary: build/linux/x64/release/bundle/spectrogram
 ```

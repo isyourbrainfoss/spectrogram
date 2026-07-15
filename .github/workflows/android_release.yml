@@ -98,3 +98,7 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
+          publish_branch: gh-pages
+          # Preserve Flatpak ostree repo under /repo from linux-flatpak-release.
+          keep_files: true
+          enable_jekyll: false
