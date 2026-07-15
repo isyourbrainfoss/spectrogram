@@ -5,6 +5,8 @@ class AppSettings {
     this.fftSize = 2048,
     this.hopSize = 512,
     this.timeWindowSec = 8.0,
+    /// How much live history to keep for pan/zoom after stop and for pre-roll WAV.
+    this.historySec = 60.0,
     this.minFreqHz = 20.0,
     this.maxFreqHz = 12000.0,
     this.minDb = -90.0,
@@ -23,6 +25,7 @@ class AppSettings {
   final int fftSize;
   final int hopSize;
   final double timeWindowSec;
+  final double historySec;
   final double minFreqHz;
   final double maxFreqHz;
   final double minDb;
@@ -42,10 +45,22 @@ class AppSettings {
 
   double frequencyOfBin(int bin) => bin * sampleRate / fftSize;
 
-  /// Columns needed for the configured time window (approx).
+  /// Columns needed for the *visible* live time window (approx).
   int get columnCount {
     final hopsPerSec = sampleRate / hopSize;
     return (timeWindowSec * hopsPerSec).ceil().clamp(32, 2048);
+  }
+
+  /// Columns kept in memory for pan/zoom / export (at least the visible window).
+  int get historyColumnCount {
+    final hopsPerSec = sampleRate / hopSize;
+    final hist = (historySec * hopsPerSec).ceil();
+    return hist.clamp(columnCount, 120000);
+  }
+
+  /// PCM samples kept in the live pre-roll ring (bytes = samples * 2 for PCM16).
+  int get historyPcmSamples {
+    return (historySec * sampleRate).ceil().clamp(sampleRate, 48000 * 600);
   }
 
   AppSettings copyWith({
@@ -53,6 +68,7 @@ class AppSettings {
     int? fftSize,
     int? hopSize,
     double? timeWindowSec,
+    double? historySec,
     double? minFreqHz,
     double? maxFreqHz,
     double? minDb,
@@ -69,6 +85,7 @@ class AppSettings {
       fftSize: fftSize ?? this.fftSize,
       hopSize: hopSize ?? this.hopSize,
       timeWindowSec: timeWindowSec ?? this.timeWindowSec,
+      historySec: historySec ?? this.historySec,
       minFreqHz: minFreqHz ?? this.minFreqHz,
       maxFreqHz: maxFreqHz ?? this.maxFreqHz,
       minDb: minDb ?? this.minDb,
@@ -89,6 +106,7 @@ class AppSettings {
         'fft_size': fftSize,
         'hop_size': hopSize,
         'time_window_sec': timeWindowSec,
+        'history_sec': historySec,
         'min_freq_hz': minFreqHz,
         'max_freq_hz': maxFreqHz,
         'min_db': minDb,
@@ -107,6 +125,7 @@ class AppSettings {
       fftSize: _asInt(map['fft_size'], d.fftSize),
       hopSize: _asInt(map['hop_size'], d.hopSize),
       timeWindowSec: _asDouble(map['time_window_sec'], d.timeWindowSec),
+      historySec: _asDouble(map['history_sec'], d.historySec),
       minFreqHz: _asDouble(map['min_freq_hz'], d.minFreqHz),
       maxFreqHz: _asDouble(map['max_freq_hz'], d.maxFreqHz),
       minDb: _asDouble(map['min_db'], d.minDb),
@@ -133,6 +152,7 @@ class AppSettings {
     return sampleRate != other.sampleRate ||
         fftSize != other.fftSize ||
         hopSize != other.hopSize ||
+        historySec != other.historySec ||
         inputDeviceId != other.inputDeviceId;
   }
 
@@ -155,6 +175,7 @@ class AppSettings {
         other.fftSize == fftSize &&
         other.hopSize == hopSize &&
         other.timeWindowSec == timeWindowSec &&
+        other.historySec == historySec &&
         other.minFreqHz == minFreqHz &&
         other.maxFreqHz == maxFreqHz &&
         other.minDb == minDb &&
@@ -172,6 +193,7 @@ class AppSettings {
         fftSize,
         hopSize,
         timeWindowSec,
+        historySec,
         minFreqHz,
         maxFreqHz,
         minDb,

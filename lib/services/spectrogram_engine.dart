@@ -58,10 +58,14 @@ class SpectrogramEngine extends ChangeNotifier {
   double? _peakFreqHz;
   double? _peakDb;
 
-  // --- File recording (PCM while live) ---
+  // --- Live PCM ring (pre-roll) + optional file recording ---
   bool _recording = false;
-  BytesBuilder? _recordBuffer;
+  BytesBuilder? _recordBuffer; // grows only while actively "recording to file"
   int? _recordSampleRate;
+  /// Continuous ring of recent PCM16 mono (same length as history window).
+  late Uint8List _pcmRing;
+  int _pcmWrite = 0;
+  int _pcmFilled = 0;
   String? _sourceLabel; // e.g. imported file name
 
   AppSettings get settings => _settings;
@@ -81,6 +85,12 @@ class SpectrogramEngine extends ChangeNotifier {
   int get filledColumns => _filled;
   int get writeIndex => _writeIndex;
 
+  /// Seconds of spectrogram history currently stored.
+  double get storedHistorySec => _filled * secondsPerColumn;
+
+  /// Configured max history length for live capture.
+  double get historyCapacitySec => _settings.historySec;
+
   /// Leftmost visible column age (0 = oldest stored).
   int get viewStart => _viewStart.clamp(0, math.max(0, _filled - 1));
 
@@ -92,6 +102,8 @@ class SpectrogramEngine extends ChangeNotifier {
 
   bool get followLive => _followLive;
   bool get canPan => _filled > viewColumnCount;
+  /// Zoom is allowed whenever we have more than the minimum visible columns.
+  bool get canZoom => _filled > 32;
 
   Float32List get latestDb => _latestDb;
   Float32List get displayDb => _displayDb;
@@ -133,6 +145,7 @@ class SpectrogramEngine extends ChangeNotifier {
         prev.fftSize != next.fftSize ||
         prev.hopSize != next.hopSize ||
         prev.timeWindowSec != next.timeWindowSec ||
+        prev.historySec != next.historySec ||
         prev.minFreqHz != next.minFreqHz ||
         prev.maxFreqHz != next.maxFreqHz;
     final restartCapture = prev.requiresPipelineRestart(next);
@@ -178,7 +191,9 @@ class SpectrogramEngine extends ChangeNotifier {
     _fromBin = range.fromBin;
     final defaultVis = _settings.columnCount;
     _visibleColumns = defaultVis;
-    final cols = (capacity ?? defaultVis).clamp(32, 120000);
+    // Live capture keeps a longer history for pan/zoom after stop.
+    final cols =
+        (capacity ?? _settings.historyColumnCount).clamp(32, 120000);
     _colorColumns = List.generate(cols, (_) => Uint32List(range.count));
     _dbColumns = List.generate(cols, (_) => Float32List(range.count));
     _writeIndex = 0;
@@ -195,13 +210,49 @@ class SpectrogramEngine extends ChangeNotifier {
     }
     _peakFreqHz = null;
     _peakDb = null;
+    _initPcmRing();
+  }
+
+  void _initPcmRing() {
+    final bytes = _settings.historyPcmSamples * 2; // PCM16
+    _pcmRing = Uint8List(bytes);
+    _pcmWrite = 0;
+    _pcmFilled = 0;
+  }
+
+  void _appendPcmRing(Uint8List bytes) {
+    if (bytes.isEmpty || _pcmRing.isEmpty) return;
+    final cap = _pcmRing.length;
+    var offset = 0;
+    while (offset < bytes.length) {
+      final space = cap - _pcmWrite;
+      final n = math.min(space, bytes.length - offset);
+      _pcmRing.setRange(_pcmWrite, _pcmWrite + n, bytes, offset);
+      _pcmWrite = (_pcmWrite + n) % cap;
+      offset += n;
+      _pcmFilled = math.min(cap, _pcmFilled + n);
+    }
+  }
+
+  /// Linearize the PCM ring (oldest → newest).
+  Uint8List _pcmRingSnapshot() {
+    if (_pcmFilled == 0) return Uint8List(0);
+    if (_pcmFilled < _pcmRing.length) {
+      return Uint8List.fromList(_pcmRing.sublist(0, _pcmFilled));
+    }
+    final out = Uint8List(_pcmRing.length);
+    final tail = _pcmRing.length - _pcmWrite;
+    out.setRange(0, tail, _pcmRing, _pcmWrite);
+    out.setRange(tail, out.length, _pcmRing, 0);
+    return out;
   }
 
   /// Pan the visible window by [deltaColumns] (positive → newer / right).
   void panViewport(int deltaColumns) {
-    if (_filled <= viewColumnCount) return;
+    if (_filled <= 1) return;
     _followLive = false;
-    final maxStart = _filled - viewColumnCount;
+    final vis = viewColumnCount.clamp(1, _filled);
+    final maxStart = math.max(0, _filled - vis);
     _viewStart = (_viewStart + deltaColumns).clamp(0, maxStart);
     notifyListeners();
   }
@@ -212,8 +263,13 @@ class SpectrogramEngine extends ChangeNotifier {
     _followLive = false;
     final minVis = math.min(32, _filled);
     final maxVis = _filled;
-    final next = (_visibleColumns / factor).round().clamp(minVis, maxVis);
-    _visibleColumns = next;
+    // When fully zoomed out, still allow zoom-in (factor > 1).
+    var next = (_visibleColumns / factor);
+    if (next.round() == _visibleColumns) {
+      // Ensure at least one-column change so wheel always does something.
+      next = factor > 1 ? _visibleColumns - 1.0 : _visibleColumns + 1.0;
+    }
+    _visibleColumns = next.round().clamp(minVis, maxVis);
     final maxStart = math.max(0, _filled - _visibleColumns);
     _viewStart = _viewStart.clamp(0, maxStart);
     notifyListeners();
@@ -300,6 +356,8 @@ class SpectrogramEngine extends ChangeNotifier {
 
   Future<void> stop() async {
     await _capture.stop();
+    // Unlock pan/zoom over retained history.
+    _followLive = false;
     // Keep file recording buffer until user saves or cancels.
     if (_status != EngineStatus.noPermission) {
       _status = EngineStatus.idle;
@@ -312,11 +370,18 @@ class SpectrogramEngine extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   /// Start capturing raw PCM to a buffer (requires live mic to be running).
+  ///
+  /// Seeds the file with everything already in the live pre-roll ring so audio
+  /// from before the record button was pressed is included.
   void startFileRecording() {
     if (!isRunning) return;
     _recording = true;
     _recordBuffer = BytesBuilder(copy: false);
     _recordSampleRate = activeSampleRate;
+    final preRoll = _pcmRingSnapshot();
+    if (preRoll.isNotEmpty) {
+      _recordBuffer!.add(preRoll);
+    }
     notifyListeners();
   }
 
@@ -324,11 +389,11 @@ class SpectrogramEngine extends ChangeNotifier {
   Uint8List? stopFileRecordingAsWav() {
     _recording = false;
     final buf = _recordBuffer;
-    final sr = _recordSampleRate;
+    final sr = _recordSampleRate ?? activeSampleRate;
     _recordBuffer = null;
     _recordSampleRate = null;
     notifyListeners();
-    if (buf == null || sr == null || buf.length < 2) return null;
+    if (buf == null || buf.length < 2) return null;
     final pcm = buf.toBytes();
     return WavIo.encodeMonoPcm16Bytes(pcm16le: pcm, sampleRate: sr);
   }
@@ -340,6 +405,19 @@ class SpectrogramEngine extends ChangeNotifier {
     _recordSampleRate = null;
     notifyListeners();
   }
+
+  /// Export the live history ring (what is currently in memory) as WAV.
+  Uint8List? exportHistoryAsWav() {
+    final pcm = _pcmRingSnapshot();
+    if (pcm.length < 2) return null;
+    return WavIo.encodeMonoPcm16Bytes(
+      pcm16le: pcm,
+      sampleRate: activeSampleRate,
+    );
+  }
+
+  /// True when there is stored PCM history that can be exported.
+  bool get hasExportableHistory => _pcmFilled >= 2;
 
   // ---------------------------------------------------------------------------
   // Import / offline analysis
@@ -398,11 +476,14 @@ class SpectrogramEngine extends ChangeNotifier {
     _peakFreqHz = null;
     _peakDb = null;
     _sourceLabel = null;
+    _initPcmRing();
     notifyListeners();
   }
 
   void _onPcm(Uint8List bytes) {
     if (_disposed) return;
+    // Always keep a rolling pre-roll of recent audio.
+    _appendPcmRing(bytes);
     if (_recording && _recordBuffer != null) {
       _recordBuffer!.add(bytes);
     }
@@ -435,7 +516,8 @@ class SpectrogramEngine extends ChangeNotifier {
 
     _writeIndex = (_writeIndex + 1) % columnCount;
     if (_filled < columnCount) _filled++;
-    if (_followLive || isRunning) {
+    // Follow live edge only while capturing and follow mode is on.
+    if (_followLive && isRunning) {
       _viewStart = math.max(0, _filled - _visibleColumns);
     }
     _maybeNotify();

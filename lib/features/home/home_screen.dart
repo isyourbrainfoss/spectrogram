@@ -122,7 +122,23 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     engine.startFileRecording();
-    _snack('Recording… tap again to save WAV');
+    // Pre-roll is included from the history ring.
+    final pre = engine.recordingSeconds;
+    _snack(
+      pre > 0.5
+          ? 'Recording (includes ~${pre.toStringAsFixed(0)}s pre-roll)…'
+          : 'Recording…',
+      short: true,
+    );
+  }
+
+  Future<void> _exportHistory() async {
+    final wav = widget.engine.exportHistoryAsWav();
+    if (wav == null) {
+      _snack('No history to export yet');
+      return;
+    }
+    await _saveWavBytes(wav);
   }
 
   Future<void> _saveWavBytes(Uint8List wav) async {
@@ -283,6 +299,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               _importWav();
                             case 'record':
                               _toggleRecord();
+                            case 'export_history':
+                              _exportHistory();
                           }
                         },
                         itemBuilder: (context) => [
@@ -309,6 +327,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                 engine.isRecordingToFile
                                     ? 'Stop & save recording'
                                     : 'Record to WAV',
+                              ),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'export_history',
+                            enabled: engine.hasExportableHistory,
+                            child: ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.save_alt),
+                              title: Text(
+                                engine.hasExportableHistory
+                                    ? 'Save history WAV '
+                                        '(~${engine.storedHistorySec.toStringAsFixed(0)}s)'
+                                    : 'Save history WAV',
                               ),
                             ),
                           ),

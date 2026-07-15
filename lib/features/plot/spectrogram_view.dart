@@ -4,6 +4,7 @@ import 'dart:ui' as ui show Image, PixelFormat, decodeImageFromPixels;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/features/plot/axis_labels.dart';
 import 'package:spectrogram/features/plot/crosshair_overlay.dart';
@@ -247,7 +248,11 @@ class _SpectrogramViewState extends State<SpectrogramView>
             yTicks: yTicks,
             yAxisTitle: s.freqScale == FreqScale.logarithmic ? 'Hz (log)' : 'Hz',
             xMinLabel: leftT,
-            xMidLabel: e.canPan ? '2-finger pan · pinch zoom' : 'time',
+            xMidLabel: e.canZoom
+                ? (e.canPan
+                    ? 'wheel zoom · shift+wheel pan'
+                    : 'wheel zoom')
+                : 'time',
             xMaxLabel: rightT,
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -258,11 +263,19 @@ class _SpectrogramViewState extends State<SpectrogramView>
                 return Listener(
                   behavior: HitTestBehavior.opaque,
                   onPointerSignal: (signal) {
-                    // Mouse wheel zoom when history is longer than the window.
-                    if (signal is PointerScrollEvent && e.canPan) {
+                    // Mouse wheel zoom — allowed whenever we have enough history
+                    // (not only when already zoomed in / canPan).
+                    if (signal is PointerScrollEvent && e.canZoom) {
                       final dy = signal.scrollDelta.dy;
                       if (dy == 0) return;
-                      e.zoomViewport(dy > 0 ? 1.15 : 1 / 1.15);
+                      // Shift+wheel pans through time on desktop.
+                      if (HardwareKeyboard.instance.isShiftPressed) {
+                        final cols = (dy > 0 ? 8 : -8);
+                        e.panViewport(cols);
+                      } else {
+                        // Scroll down → zoom out, up → zoom in.
+                        e.zoomViewport(dy > 0 ? 1 / 1.15 : 1.15);
+                      }
                     }
                   },
                   onPointerDown: (ev) {
@@ -382,35 +395,50 @@ class _SpectrogramViewState extends State<SpectrogramView>
             ),
           ),
         ),
-        if (e.canPan || !e.followLive)
+        // Show after stop / import whenever we have history to navigate.
+        if (e.filledColumns > 0 && (!e.isRunning || e.canZoom))
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(
-                  tooltip: 'Start of recording',
+                  tooltip: 'Oldest',
                   visualDensity: VisualDensity.compact,
                   iconSize: 18,
-                  onPressed: e.goToHistoryStart,
+                  onPressed: e.filledColumns > 0 ? e.goToHistoryStart : null,
                   icon: const Icon(Icons.first_page),
                 ),
                 IconButton(
-                  tooltip: 'Zoom out',
+                  tooltip: 'Pan left (older)',
                   visualDensity: VisualDensity.compact,
                   iconSize: 18,
-                  onPressed: () => e.zoomViewport(1 / 1.4),
+                  onPressed: e.canPan ? () => e.panViewport(-e.viewColumnCount ~/ 4) : null,
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                IconButton(
+                  tooltip: 'Zoom out (show more time)',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  onPressed: e.canZoom ? () => e.zoomViewport(1 / 1.4) : null,
                   icon: const Icon(Icons.zoom_out),
                 ),
                 IconButton(
                   tooltip: 'Zoom in',
                   visualDensity: VisualDensity.compact,
                   iconSize: 18,
-                  onPressed: () => e.zoomViewport(1.4),
+                  onPressed: e.canZoom ? () => e.zoomViewport(1.4) : null,
                   icon: const Icon(Icons.zoom_in),
                 ),
                 IconButton(
-                  tooltip: 'End / live edge',
+                  tooltip: 'Pan right (newer)',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  onPressed: e.canPan ? () => e.panViewport(e.viewColumnCount ~/ 4) : null,
+                  icon: const Icon(Icons.chevron_right),
+                ),
+                IconButton(
+                  tooltip: e.isRunning ? 'Follow live' : 'Newest',
                   visualDensity: VisualDensity.compact,
                   iconSize: 18,
                   onPressed: e.followLiveEnd,

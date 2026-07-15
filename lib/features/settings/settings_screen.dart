@@ -331,13 +331,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const _SectionHeader('Display range'),
           _SliderTile(
-            title: 'Time window',
+            title: 'Visible time window',
             valueLabel: '${s.timeWindowSec.toStringAsFixed(0)} s',
             value: s.timeWindowSec,
             min: 2,
             max: 30,
             divisions: 28,
             onChanged: (v) => _apply(s.copyWith(timeWindowSec: v.roundToDouble())),
+          ),
+          _SliderTile(
+            title: 'History kept in memory',
+            valueLabel: '${s.historySec.toStringAsFixed(0)} s',
+            value: s.historySec.clamp(8, 300),
+            min: 8,
+            max: 300,
+            divisions: 292,
+            onChanged: (v) {
+              final hist = v.roundToDouble();
+              final win = s.timeWindowSec > hist ? hist : s.timeWindowSec;
+              _apply(s.copyWith(historySec: hist, timeWindowSec: win));
+            },
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'Visible window is what you see while live. History is how far you can '
+              'pan after stop, and how much pre-roll is included when you hit Record.',
+              style: TextStyle(fontSize: 12),
+            ),
           ),
           _SliderTile(
             title: 'Min frequency',
