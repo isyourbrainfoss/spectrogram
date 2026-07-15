@@ -30,8 +30,17 @@ One-tap (Obtainium installed):
 https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/version.json
 ```
 
-APKs are also attached to [GitHub Releases](https://github.com/isyourbrainfoss/spectrogram/releases) (`v*` tags).
+APKs are also attached to [GitHub Releases](https://github.com/isyourbrainfoss/spectrogram/releases).
 
+#### “App not installed” / must uninstall to update
+
+Android only upgrades an APK if the **signing certificate** matches the installed app.
+
+Releases use a **stable upload keystore** in the repo so Obtainium can update in-place. If you installed an older build signed with a temporary CI debug key, **uninstall once**, then install again from Obtainium — later updates work without uninstalling.
+
+```bash
+adb uninstall com.isyourbrainfoss.spectrogram
+```
 ### Linux (Flatpak — recommended)
 
 Add the remote and install (same pattern as Flowlog / Progressor):

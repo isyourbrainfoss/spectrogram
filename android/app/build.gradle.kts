@@ -6,10 +6,18 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val keystoreProperties = Properties()
-val keystorePropertiesFile = rootProject.file("key.properties")
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+// Prefer committed upload-key.properties (stable Obtainium updates).
+// Optional override: CI secrets write android/key.properties + release.keystore.
+val uploadKeystoreProperties = Properties().apply {
+    val propsFile = rootProject.file("upload-key.properties")
+    if (propsFile.exists()) {
+        propsFile.inputStream().use { load(it) }
+    }
+}
+val secretKeystoreProperties = Properties()
+val secretKeystorePropertiesFile = rootProject.file("key.properties")
+if (secretKeystorePropertiesFile.exists()) {
+    secretKeystoreProperties.load(FileInputStream(secretKeystorePropertiesFile))
 }
 
 android {
@@ -31,22 +39,38 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (uploadKeystoreProperties.isNotEmpty() &&
+            uploadKeystoreProperties.getProperty("storeFile") != null) {
+            create("upload") {
+                keyAlias = uploadKeystoreProperties.getProperty("keyAlias")
+                keyPassword = uploadKeystoreProperties.getProperty("keyPassword")
+                storeFile =
+                    uploadKeystoreProperties.getProperty("storeFile")?.let {
+                        rootProject.file(it)
+                    }
+                storePassword = uploadKeystoreProperties.getProperty("storePassword")
+            }
+        }
+        if (secretKeystorePropertiesFile.exists()) {
             create("release") {
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = keystoreProperties["storeFile"]?.let { file(it) }
-                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = secretKeystoreProperties["keyAlias"] as String
+                keyPassword = secretKeystoreProperties["keyPassword"] as String
+                storeFile = secretKeystoreProperties["storeFile"]?.let { file(it) }
+                storePassword = secretKeystoreProperties["storePassword"] as String
             }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // Prefer secret release key when present; else stable upload keystore.
+            signingConfig = when {
+                secretKeystorePropertiesFile.exists() ->
+                    signingConfigs.getByName("release")
+                signingConfigs.findByName("upload") != null ->
+                    signingConfigs.getByName("upload")
+                else ->
+                    signingConfigs.getByName("debug")
             }
         }
     }
