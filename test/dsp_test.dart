@@ -2,11 +2,14 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:spectrogram/audio/input_device_labels.dart';
+import 'package:spectrogram/audio/wav_io.dart';
 import 'package:spectrogram/dsp/colormap.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/dsp/pcm.dart';
 import 'package:spectrogram/dsp/stft_processor.dart';
 import 'package:spectrogram/models/app_settings.dart';
+import 'package:record/record.dart';
 
 void main() {
   group('pcm16ToMonoFloat', () {
@@ -125,6 +128,47 @@ void main() {
       );
       final peak = s.reduce((a, b) => math.max(a.abs(), b.abs()));
       expect(peak, lessThanOrEqualTo(0.5 + 1e-9));
+    });
+  });
+
+  group('WavIo', () {
+    test('round-trips mono PCM16', () {
+      final sine = generateSine(
+        freqHz: 440,
+        sampleRate: 8000,
+        length: 800,
+        amplitude: 0.5,
+      );
+      final bytes = WavIo.encodeMonoPcm16(samples: sine, sampleRate: 8000);
+      final decoded = WavIo.decode(bytes);
+      expect(decoded.sampleRate, 8000);
+      expect(decoded.channels, 1);
+      expect(decoded.samples.length, sine.length);
+      expect(decoded.samples[100], closeTo(sine[100], 2 / 32768));
+    });
+  });
+
+  group('InputDeviceLabels', () {
+    test('disambiguates duplicate product names', () {
+      const a = InputDevice(
+        id: '1',
+        label: 'FP5',
+        type: InputDeviceType.builtIn,
+      );
+      const b = InputDevice(
+        id: '2',
+        label: 'FP5',
+        type: InputDeviceType.builtIn,
+        sampleRates: [48000],
+      );
+      final all = [a, b];
+      final la = InputDeviceLabels.format(a, all: all);
+      final lb = InputDeviceLabels.format(b, all: all);
+      expect(la, isNot(equals(lb)));
+      expect(la, contains('Built-in'));
+      expect(la, contains('mic 1'));
+      expect(lb, contains('mic 2'));
+      expect(lb, contains('48000 Hz'));
     });
   });
 

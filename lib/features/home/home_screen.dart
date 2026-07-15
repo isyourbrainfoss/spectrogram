@@ -1,4 +1,10 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:spectrogram/features/home/view_mode.dart';
 import 'package:spectrogram/features/plot/crosshair_overlay.dart';
 import 'package:spectrogram/features/plot/spectrogram_view.dart';
@@ -67,6 +73,101 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (mounted) setState(() {});
+  }
+
+  Future<void> _importWav() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['wav', 'WAV'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      Uint8List? bytes = file.bytes;
+      if (bytes == null && file.path != null) {
+        bytes = await File(file.path!).readAsBytes();
+      }
+      if (bytes == null) {
+        _snack('Could not read file');
+        return;
+      }
+      final name = file.name;
+      await widget.engine.importWavBytes(bytes, label: name);
+      if (!mounted) return;
+      setState(() => _crosshair = null);
+      _snack('Imported $name');
+    } catch (e) {
+      _snack('Import failed: $e');
+    }
+  }
+
+  Future<void> _toggleRecord() async {
+    final engine = widget.engine;
+    if (engine.isRecordingToFile) {
+      final wav = engine.stopFileRecordingAsWav();
+      if (wav == null) {
+        _snack('Nothing recorded');
+        return;
+      }
+      await _saveWavBytes(wav);
+      return;
+    }
+    if (!engine.isRunning) {
+      // Start mic then arm recording.
+      await engine.start();
+      if (!engine.isRunning) {
+        _snack(engine.errorMessage ?? 'Could not start microphone');
+        return;
+      }
+    }
+    engine.startFileRecording();
+    _snack('Recording… tap again to save WAV');
+  }
+
+  Future<void> _saveWavBytes(Uint8List wav) async {
+    try {
+      final stamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '-')
+          .split('.')
+          .first;
+      final fileName = 'spectrogram_$stamp.wav';
+
+      // Prefer user-chosen path when the platform supports save dialogs.
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save recording',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['wav'],
+        bytes: wav,
+      );
+      if (savePath != null) {
+        // On some platforms saveFile already wrote [bytes]; ensure file exists.
+        final f = File(savePath.endsWith('.wav') ? savePath : '$savePath.wav');
+        if (!await f.exists() || await f.length() == 0) {
+          await f.writeAsBytes(wav, flush: true);
+        }
+        if (mounted) _snack('Saved ${p.basename(f.path)}');
+        return;
+      }
+
+      // Fallback: app documents directory.
+      final dir = await getApplicationDocumentsDirectory();
+      final out = File(p.join(dir.path, 'recordings', fileName));
+      await out.parent.create(recursive: true);
+      await out.writeAsBytes(wav, flush: true);
+      if (mounted) _snack('Saved ${out.path}');
+    } catch (e) {
+      _snack('Save failed: $e');
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+    );
   }
 
   @override
@@ -145,10 +246,43 @@ class _HomeScreenState extends State<HomeScreen> {
                         icon: const Icon(Icons.more_vert, size: 22),
                         padding: EdgeInsets.zero,
                         onSelected: (value) {
-                          if (value == 'settings') _openSettings();
+                          switch (value) {
+                            case 'settings':
+                              _openSettings();
+                            case 'import':
+                              _importWav();
+                            case 'record':
+                              _toggleRecord();
+                          }
                         },
-                        itemBuilder: (context) => const [
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'import',
+                            child: ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.folder_open_outlined),
+                              title: Text('Import WAV…'),
+                            ),
+                          ),
                           PopupMenuItem(
+                            value: 'record',
+                            child: ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(
+                                engine.isRecordingToFile
+                                    ? Icons.stop_circle_outlined
+                                    : Icons.fiber_manual_record,
+                              ),
+                              title: Text(
+                                engine.isRecordingToFile
+                                    ? 'Stop & save recording'
+                                    : 'Record to WAV',
+                              ),
+                            ),
+                          ),
+                          const PopupMenuItem(
                             value: 'settings',
                             child: ListTile(
                               dense: true,
@@ -211,6 +345,8 @@ class _HomeScreenState extends State<HomeScreen> {
               engine: engine,
               hasCrosshair: _crosshair != null,
               onClearCrosshair: () => setState(() => _crosshair = null),
+              onToggleRecord: _toggleRecord,
+              onImport: _importWav,
             ),
           ],
         ),
@@ -263,6 +399,7 @@ class _LiveDot extends StatelessWidget {
                 color: color,
               ),
             ),
+            // Note: file-import mode shows a chip under the plot instead.
           ],
         ),
       ),

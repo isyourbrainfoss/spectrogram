@@ -2,25 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:spectrogram/features/plot/axis_labels.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
 
-/// Compact start/stop + utility icons under the plot.
-///
-/// Stopping capture leaves the last spectrogram so crosshair still works.
+/// Compact start/stop, record, and utility icons under the plot.
 class LiveControls extends StatelessWidget {
   const LiveControls({
     super.key,
     required this.engine,
     required this.hasCrosshair,
     required this.onClearCrosshair,
+    this.onToggleRecord,
+    this.onImport,
   });
 
   final SpectrogramEngine engine;
   final bool hasCrosshair;
   final VoidCallback onClearCrosshair;
+  final VoidCallback? onToggleRecord;
+  final VoidCallback? onImport;
 
   @override
   Widget build(BuildContext context) {
     final running = engine.isRunning;
     final hasData = engine.filledColumns > 0;
+    final recording = engine.isRecordingToFile;
     final scheme = Theme.of(context).colorScheme;
 
     return Padding(
@@ -28,7 +31,9 @@ class LiveControls extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (engine.peakFreqHz != null && hasData)
+          if ((engine.peakFreqHz != null && hasData) ||
+              engine.sourceLabel != null ||
+              recording)
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Wrap(
@@ -36,16 +41,31 @@ class LiveControls extends StatelessWidget {
                 runSpacing: 4,
                 alignment: WrapAlignment.center,
                 children: [
-                  _Chip(
-                    icon: Icons.graphic_eq,
-                    label: formatFrequency(engine.peakFreqHz!),
-                    color: scheme.tertiary,
-                  ),
-                  _Chip(
-                    icon: Icons.straighten,
-                    label: formatDb(engine.peakDb ?? engine.settings.minDb),
-                    color: scheme.secondary,
-                  ),
+                  if (engine.sourceLabel != null)
+                    _Chip(
+                      icon: Icons.audio_file_outlined,
+                      label: engine.sourceLabel!,
+                      color: scheme.primary,
+                    ),
+                  if (recording)
+                    _Chip(
+                      icon: Icons.fiber_manual_record,
+                      label:
+                          'REC ${engine.recordingSeconds.toStringAsFixed(1)}s',
+                      color: scheme.error,
+                    ),
+                  if (engine.peakFreqHz != null && hasData) ...[
+                    _Chip(
+                      icon: Icons.graphic_eq,
+                      label: formatFrequency(engine.peakFreqHz!),
+                      color: scheme.tertiary,
+                    ),
+                    _Chip(
+                      icon: Icons.straighten,
+                      label: formatDb(engine.peakDb ?? engine.settings.minDb),
+                      color: scheme.secondary,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -74,6 +94,36 @@ class LiveControls extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
+              IconButton.filledTonal(
+                tooltip: recording
+                    ? 'Stop recording & save WAV'
+                    : 'Record WAV while live',
+                visualDensity: VisualDensity.compact,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(40, 40),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  foregroundColor: recording ? scheme.error : null,
+                ),
+                onPressed: onToggleRecord,
+                icon: Icon(
+                  recording
+                      ? Icons.stop_circle_outlined
+                      : Icons.fiber_manual_record,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 2),
+              IconButton.filledTonal(
+                tooltip: 'Import WAV',
+                visualDensity: VisualDensity.compact,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(40, 40),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: onImport,
+                icon: const Icon(Icons.folder_open_rounded, size: 20),
+              ),
+              const SizedBox(width: 2),
               IconButton.filledTonal(
                 tooltip: 'Clear history',
                 visualDensity: VisualDensity.compact,
@@ -128,13 +178,17 @@ class _Chip extends StatelessWidget {
         children: [
           Icon(icon, size: 12, color: color),
           const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.onSurface,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           ),
         ],

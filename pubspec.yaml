@@ -12,6 +12,9 @@ dependencies:
   record: ^7.1.1
   fftea: ^1.5.0+1
   shared_preferences: ^2.5.3
+  path_provider: ^2.1.5
+  path: ^1.9.1
+  file_picker: ^10.1.9
 
 dev_dependencies:
   flutter_test:

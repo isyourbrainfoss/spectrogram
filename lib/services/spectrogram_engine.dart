@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
+import 'package:spectrogram/audio/wav_io.dart';
 import 'package:spectrogram/dsp/colormap.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/dsp/pcm.dart';
@@ -12,7 +14,7 @@ import 'package:spectrogram/services/audio_capture_service.dart';
 
 enum EngineStatus { idle, starting, running, error, noPermission }
 
-/// Coordinates mic capture → STFT → ring buffers for the UI.
+/// Coordinates mic capture / file import → STFT → ring buffers for the UI.
 class SpectrogramEngine extends ChangeNotifier {
   SpectrogramEngine({
     AudioCaptureService? capture,
@@ -26,6 +28,9 @@ class SpectrogramEngine extends ChangeNotifier {
   AppSettings _settings;
   late StftProcessor _processor;
   late ColorMap _colorMap;
+
+  /// When set (imported file), overrides [AppSettings.sampleRate] for analysis.
+  int? _sourceSampleRate;
 
   /// Circular spectrogram color columns (ARGB) and parallel dB columns.
   late List<Uint32List> _colorColumns;
@@ -48,12 +53,23 @@ class SpectrogramEngine extends ChangeNotifier {
   double? _peakFreqHz;
   double? _peakDb;
 
+  // --- File recording (PCM while live) ---
+  bool _recording = false;
+  BytesBuilder? _recordBuffer;
+  int? _recordSampleRate;
+  String? _sourceLabel; // e.g. imported file name
+
   AppSettings get settings => _settings;
   EngineStatus get status => _status;
   String? get errorMessage => _errorMessage;
   bool get isRunning => _status == EngineStatus.running;
   double? get peakFreqHz => _peakFreqHz;
   double? get peakDb => _peakDb;
+  bool get isRecordingToFile => _recording;
+  String? get sourceLabel => _sourceLabel;
+
+  /// Sample rate used for the current STFT / frequency axis.
+  int get activeSampleRate => _sourceSampleRate ?? _settings.sampleRate;
 
   int get columnCount => _colorColumns.length;
   int get displayBins => _displayDb.length;
@@ -64,6 +80,13 @@ class SpectrogramEngine extends ChangeNotifier {
   Float32List get displayDb => _displayDb;
   Float32List get displayFreqs => _displayFreqs;
   ColorMap get colorMap => _colorMap;
+
+  /// Approximate recorded duration while recording (or 0).
+  double get recordingSeconds {
+    if (_recordBuffer == null || _recordSampleRate == null) return 0;
+    final samples = _recordBuffer!.length ~/ 2;
+    return samples / _recordSampleRate!;
+  }
 
   Uint32List colorColumnAt(int age) {
     if (_filled == 0) return Uint32List(displayBins);
@@ -89,14 +112,12 @@ class SpectrogramEngine extends ChangeNotifier {
 
   Future<void> applySettings(AppSettings next) async {
     final prev = _settings;
-    // Structural changes wipe/rebuild STFT buffers.
     final structural = prev.sampleRate != next.sampleRate ||
         prev.fftSize != next.fftSize ||
         prev.hopSize != next.hopSize ||
         prev.timeWindowSec != next.timeWindowSec ||
         prev.minFreqHz != next.minFreqHz ||
         prev.maxFreqHz != next.maxFreqHz;
-    // Capture restart: device, sample rate, FFT/hop (see AppSettings).
     final restartCapture = prev.requiresPipelineRestart(next);
     final wasRunning = isRunning;
 
@@ -105,10 +126,12 @@ class SpectrogramEngine extends ChangeNotifier {
     }
 
     _settings = next;
-    if (structural) {
+    if (structural && _sourceSampleRate == null) {
+      _rebuildPipeline();
+    } else if (structural && _sourceSampleRate != null) {
+      // Keep imported sample rate override but rebuild bins.
       _rebuildPipeline();
     } else {
-      // Device-only / appearance: keep spectrogram history, update colormap.
       _colorMap = ColorMap.of(_settings.colormap);
     }
 
@@ -144,16 +167,17 @@ class SpectrogramEngine extends ChangeNotifier {
     _latestDb = Float32List(_processor.binCount);
     _displayDb = Float32List(range.count);
     _displayFreqs = Float32List(range.count);
+    final sr = activeSampleRate;
     for (var i = 0; i < range.count; i++) {
       _displayFreqs[i] =
-          _processor.frequencyOfBin(range.fromBin + i, _settings.sampleRate);
+          _processor.frequencyOfBin(range.fromBin + i, sr);
     }
     _peakFreqHz = null;
     _peakDb = null;
   }
 
   ({int fromBin, int toBin, int count}) _computeDisplayBinRange() {
-    final sr = _settings.sampleRate;
+    final sr = activeSampleRate;
     final nyquist = sr / 2.0;
     final minF = _settings.minFreqHz.clamp(0.0, nyquist);
     final maxF = _settings.maxFreqHz.clamp(minF + 1, nyquist);
@@ -167,6 +191,8 @@ class SpectrogramEngine extends ChangeNotifier {
   Future<void> start() async {
     if (_disposed) return;
     _errorMessage = null;
+    _sourceSampleRate = null; // live mic uses settings sample rate
+    _sourceLabel = null;
     _status = EngineStatus.starting;
     notifyListeners();
 
@@ -178,6 +204,7 @@ class SpectrogramEngine extends ChangeNotifier {
     }
 
     try {
+      _rebuildPipeline();
       _processor.reset();
       await _capture.start(
         sampleRate: _settings.sampleRate,
@@ -200,11 +227,78 @@ class SpectrogramEngine extends ChangeNotifier {
 
   Future<void> stop() async {
     await _capture.stop();
+    // Keep file recording buffer until user saves or cancels.
     if (_status != EngineStatus.noPermission) {
       _status = EngineStatus.idle;
     }
-    // History + last spectrum stay in memory so the user can place a crosshair
-    // after stopping (no separate freeze control).
+    notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Recording
+  // ---------------------------------------------------------------------------
+
+  /// Start capturing raw PCM to a buffer (requires live mic to be running).
+  void startFileRecording() {
+    if (!isRunning) return;
+    _recording = true;
+    _recordBuffer = BytesBuilder(copy: false);
+    _recordSampleRate = activeSampleRate;
+    notifyListeners();
+  }
+
+  /// Stop recording and return a complete WAV (PCM16 mono), or null if empty.
+  Uint8List? stopFileRecordingAsWav() {
+    _recording = false;
+    final buf = _recordBuffer;
+    final sr = _recordSampleRate;
+    _recordBuffer = null;
+    _recordSampleRate = null;
+    notifyListeners();
+    if (buf == null || sr == null || buf.length < 2) return null;
+    final pcm = buf.toBytes();
+    return WavIo.encodeMonoPcm16Bytes(pcm16le: pcm, sampleRate: sr);
+  }
+
+  /// Discard an in-progress recording without saving.
+  void cancelFileRecording() {
+    _recording = false;
+    _recordBuffer = null;
+    _recordSampleRate = null;
+    notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import / offline analysis
+  // ---------------------------------------------------------------------------
+
+  /// Decode [wavBytes] and run STFT offline into the ring buffer.
+  Future<void> importWavBytes(Uint8List wavBytes, {String? label}) async {
+    final wav = WavIo.decode(wavBytes);
+    await analyzeMono(wav.samples, wav.sampleRate, label: label);
+  }
+
+  /// Run STFT on mono float samples (offline, as fast as possible).
+  Future<void> analyzeMono(
+    Float32List samples,
+    int sampleRate, {
+    String? label,
+  }) async {
+    if (_disposed) return;
+    await stop();
+    cancelFileRecording();
+    _sourceSampleRate = sampleRate;
+    _sourceLabel = label;
+    _rebuildPipeline();
+    _processor.reset();
+
+    // Feed in chunks to avoid huge temporary allocations in STFT.
+    const chunk = 8192;
+    for (var i = 0; i < samples.length; i += chunk) {
+      final end = math.min(i + chunk, samples.length);
+      final slice = samples.sublist(i, end);
+      _processor.push(slice, _ingestFrame);
+    }
     notifyListeners();
   }
 
@@ -222,34 +316,39 @@ class SpectrogramEngine extends ChangeNotifier {
 
   void _onPcm(Uint8List bytes) {
     if (_disposed) return;
+    if (_recording && _recordBuffer != null) {
+      _recordBuffer!.add(bytes);
+    }
     final samples = pcm16ToMonoFloat(bytes);
     if (samples.isEmpty) return;
+    _processor.push(samples, _ingestFrame);
+  }
 
+  void _ingestFrame(Float32List db) {
     final rangeCount = displayBins;
-    _processor.push(samples, (db) {
-      _latestDb.setAll(0, db);
+    final sr = activeSampleRate;
+    _latestDb.setAll(0, db);
 
-      final peak = StftProcessor.peakBin(
-        db,
-        from: _fromBin,
-        to: _fromBin + rangeCount,
-      );
-      _peakFreqHz = _processor.frequencyOfBin(peak, _settings.sampleRate);
-      _peakDb = db[peak];
+    final peak = StftProcessor.peakBin(
+      db,
+      from: _fromBin,
+      to: _fromBin + rangeCount,
+    );
+    _peakFreqHz = _processor.frequencyOfBin(peak, sr);
+    _peakDb = db[peak];
 
-      final colorCol = _colorColumns[_writeIndex];
-      final dbCol = _dbColumns[_writeIndex];
-      for (var i = 0; i < rangeCount; i++) {
-        final v = db[_fromBin + i];
-        _displayDb[i] = v;
-        dbCol[i] = v;
-        colorCol[i] = _colorMap.mapDb(v, _settings.minDb, _settings.maxDb);
-      }
+    final colorCol = _colorColumns[_writeIndex];
+    final dbCol = _dbColumns[_writeIndex];
+    for (var i = 0; i < rangeCount; i++) {
+      final v = db[_fromBin + i];
+      _displayDb[i] = v;
+      dbCol[i] = v;
+      colorCol[i] = _colorMap.mapDb(v, _settings.minDb, _settings.maxDb);
+    }
 
-      _writeIndex = (_writeIndex + 1) % columnCount;
-      if (_filled < columnCount) _filled++;
-      _maybeNotify();
-    });
+    _writeIndex = (_writeIndex + 1) % columnCount;
+    if (_filled < columnCount) _filled++;
+    _maybeNotify();
   }
 
   void _maybeNotify() {
@@ -261,22 +360,16 @@ class SpectrogramEngine extends ChangeNotifier {
   }
 
   /// Seconds per spectrogram column (hop duration).
-  double get secondsPerColumn => _settings.hopSize / _settings.sampleRate;
+  double get secondsPerColumn => _settings.hopSize / activeSampleRate;
 
-  /// Inclusive column index: normX=0 → oldest, normX=1 → newest.
   int _columnAgeFromNormX(double normX) {
     if (_filled <= 1) return 0;
     final t = normX.clamp(0.0, 1.0);
     if (t >= 1.0) return _filled - 1;
     if (t <= 0.0) return 0;
-    // floor(t * filled) covers the full last column once t is in the final bin.
     return (t * _filled).floor().clamp(0, _filled - 1);
   }
 
-  /// Spectrogram sample: [normX] 0=oldest … 1=newest,
-  /// [normY] 0=minFreq … 1=maxFreq (honours linear/log scale).
-  ///
-  /// [timeSec] is relative to the right edge (“now”); negative = past.
   ({
     double freqHz,
     double db,
@@ -288,7 +381,6 @@ class SpectrogramEngine extends ChangeNotifier {
     required double normY,
   }) {
     if (_filled == 0 || displayBins == 0) return null;
-    // Map [0,1] onto columns so 0 = oldest and 1 = newest (right edge).
     final age = _columnAgeFromNormX(normX);
     final hz = FreqAxis.normToFreq(
       normY,
@@ -298,7 +390,6 @@ class SpectrogramEngine extends ChangeNotifier {
     );
     final binIndex = FreqAxis.binForFreq(_displayFreqs, hz);
     final db = dbColumnAt(age)[binIndex];
-    // Newest column is age == filled-1 → timeSec ≈ 0.
     final timeSec = (age - (_filled - 1)) * secondsPerColumn;
     return (
       freqHz: _displayFreqs[binIndex],
@@ -309,7 +400,6 @@ class SpectrogramEngine extends ChangeNotifier {
     );
   }
 
-  /// Spectrum sample: [normX] 0=minFreq … 1=maxFreq (honours linear/log scale).
   ({double freqHz, double db, int binIndex})? sampleSpectrum(double normX) {
     if (displayBins == 0) return null;
     final hz = FreqAxis.normToFreq(

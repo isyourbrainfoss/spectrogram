@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
+import 'package:spectrogram/audio/input_device_labels.dart';
 import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/settings_repository.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
@@ -97,12 +98,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         break;
       }
     }
+    final label = match == null
+        ? id
+        : InputDeviceLabels.format(match, all: _devices);
     await _apply(
       _draft.copyWith(
         inputDeviceId: id,
-        inputDeviceLabel: match?.label ?? id,
+        inputDeviceLabel: label,
       ),
     );
+  }
+
+  String _selectedDeviceSubtitle(AppSettings s) {
+    if (s.inputDeviceId == null) return 'System default';
+    for (final d in _devices) {
+      if (d.id == s.inputDeviceId) {
+        return InputDeviceLabels.format(d, all: _devices);
+      }
+    }
+    return s.inputDeviceLabel ?? s.inputDeviceId ?? 'System default';
   }
 
   @override
@@ -192,10 +206,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ? 'Scanning devices…'
                   : _deviceError != null
                       ? 'Could not list devices — $_deviceError'
-                      : (s.inputDeviceLabel ??
-                          s.inputDeviceId ??
-                          'System default'),
+                      : _selectedDeviceSubtitle(s),
             ),
+            isThreeLine: true,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -224,9 +237,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       (d) => DropdownMenuItem<String?>(
                         value: d.id,
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 220),
+                          constraints: const BoxConstraints(maxWidth: 260),
                           child: Text(
-                            d.label.isEmpty ? d.id : d.label,
+                            InputDeviceLabels.format(d, all: _devices),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -238,7 +251,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       DropdownMenuItem<String?>(
                         value: s.inputDeviceId,
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 220),
+                          constraints: const BoxConstraints(maxWidth: 260),
                           child: Text(
                             '${s.inputDeviceLabel ?? s.inputDeviceId} (unavailable)',
                             overflow: TextOverflow.ellipsis,
@@ -253,8 +266,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              'Android and Linux both list capture devices via the system audio stack. '
-              'Changing the mic restarts capture if it is running.',
+              'Labels include type and id when several mics share a product name '
+              '(e.g. two built-in mics both called FP5). Changing the mic restarts '
+              'capture if it is running.',
               style: TextStyle(fontSize: 12),
             ),
           ),
