@@ -15,9 +15,21 @@ class AudioCaptureService {
 
   Future<bool> hasPermission() => _recorder.hasPermission();
 
+  /// Enumerate capture devices (Android + Linux supported by `record`).
+  Future<List<InputDevice>> listInputDevices() async {
+    try {
+      final devices = await _recorder.listInputDevices();
+      return devices;
+    } catch (_) {
+      // MissingPluginException in tests / unsupported hosts.
+      return const [];
+    }
+  }
+
   Future<void> start({
     required int sampleRate,
     required void Function(Uint8List pcm) onPcm,
+    InputDevice? device,
     void Function(Object error)? onError,
   }) async {
     await stop();
@@ -27,6 +39,7 @@ class AudioCaptureService {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: sampleRate,
         numChannels: 1,
+        device: device,
         // Prefer raw path without AGC for accurate levels when available.
         autoGain: false,
         echoCancel: false,

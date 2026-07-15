@@ -34,6 +34,7 @@ void main() {
     expect(find.text('Sample rate'), findsOneWidget);
     expect(find.text('FFT size'), findsOneWidget);
     expect(find.text('Colormap'), findsOneWidget);
+    expect(find.text('Microphone'), findsOneWidget);
 
     engine.dispose();
   });

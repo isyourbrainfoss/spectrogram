@@ -91,9 +91,21 @@ void main() {
         hopSize: 1024,
         colormap: ColormapKind.turbo,
         colorScheme: ThemePreference.dark,
+        inputDeviceId: 'hw:1,0',
+        inputDeviceLabel: 'USB Mic',
       );
       final copy = AppSettings.fromMap(s.toMap());
       expect(copy, s);
+    });
+
+    test('clearInputDevice resets mic selection', () {
+      const s = AppSettings(
+        inputDeviceId: 'mic-1',
+        inputDeviceLabel: 'Built-in',
+      );
+      final cleared = s.copyWith(clearInputDevice: true);
+      expect(cleared.inputDeviceId, isNull);
+      expect(cleared.inputDeviceLabel, isNull);
     });
 
     test('columnCount is positive and bounded', () {

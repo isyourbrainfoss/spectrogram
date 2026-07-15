@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:record/record.dart';
 import 'package:spectrogram/dsp/colormap.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/dsp/pcm.dart';
@@ -80,28 +81,51 @@ class SpectrogramEngine extends ChangeNotifier {
     return idx < 0 ? idx + columnCount : idx;
   }
 
+  /// Available capture devices (Android / Linux via `record`).
+  Future<List<InputDevice>> listInputDevices() => _capture.listInputDevices();
+
+  /// Request mic permission so platforms can populate the device list.
+  Future<bool> hasPermissionForDevices() => _capture.hasPermission();
+
   Future<void> applySettings(AppSettings next) async {
-    final restart = _settings.requiresPipelineRestart(next) ||
-        _settings.timeWindowSec != next.timeWindowSec ||
-        _settings.minFreqHz != next.minFreqHz ||
-        _settings.maxFreqHz != next.maxFreqHz;
-    // Freq scale only remaps display — no capture restart needed.
+    final prev = _settings;
+    // Structural changes wipe/rebuild STFT buffers.
+    final structural = prev.sampleRate != next.sampleRate ||
+        prev.fftSize != next.fftSize ||
+        prev.hopSize != next.hopSize ||
+        prev.timeWindowSec != next.timeWindowSec ||
+        prev.minFreqHz != next.minFreqHz ||
+        prev.maxFreqHz != next.maxFreqHz;
+    // Capture restart: device, sample rate, FFT/hop (see AppSettings).
+    final restartCapture = prev.requiresPipelineRestart(next);
     final wasRunning = isRunning;
-    if (restart && wasRunning) {
+
+    if ((restartCapture || structural) && wasRunning) {
       await stop();
     }
+
     _settings = next;
-    if (restart) {
+    if (structural) {
       _rebuildPipeline();
     } else {
-      // Colormap / scale / dB range can update live.
+      // Device-only / appearance: keep spectrogram history, update colormap.
       _colorMap = ColorMap.of(_settings.colormap);
     }
-    if (restart && wasRunning) {
+
+    if ((restartCapture || structural) && wasRunning) {
       await start();
     } else {
       notifyListeners();
     }
+  }
+
+  InputDevice? _resolveInputDevice() {
+    final id = _settings.inputDeviceId;
+    if (id == null || id.isEmpty) return null;
+    return InputDevice(
+      id: id,
+      label: _settings.inputDeviceLabel ?? id,
+    );
   }
 
   void _rebuildPipeline() {
@@ -157,6 +181,7 @@ class SpectrogramEngine extends ChangeNotifier {
       _processor.reset();
       await _capture.start(
         sampleRate: _settings.sampleRate,
+        device: _resolveInputDevice(),
         onPcm: _onPcm,
         onError: (e) {
           _status = EngineStatus.error;

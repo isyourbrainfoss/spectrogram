@@ -13,6 +13,10 @@ class AppSettings {
     this.colorScheme = ThemePreference.system,
     // Logarithmic is the usual audio spectrogram default (more room for lows).
     this.freqScale = FreqScale.logarithmic,
+    /// Platform device id from `record` [InputDevice.id]. Null = system default.
+    this.inputDeviceId,
+    /// Last known label for display when the device list is not loaded yet.
+    this.inputDeviceLabel,
   });
 
   final int sampleRate;
@@ -26,6 +30,8 @@ class AppSettings {
   final ColormapKind colormap;
   final ThemePreference colorScheme;
   final FreqScale freqScale;
+  final String? inputDeviceId;
+  final String? inputDeviceLabel;
 
   static const defaults = AppSettings();
 
@@ -54,6 +60,9 @@ class AppSettings {
     ColormapKind? colormap,
     ThemePreference? colorScheme,
     FreqScale? freqScale,
+    String? inputDeviceId,
+    String? inputDeviceLabel,
+    bool clearInputDevice = false,
   }) {
     return AppSettings(
       sampleRate: sampleRate ?? this.sampleRate,
@@ -67,6 +76,11 @@ class AppSettings {
       colormap: colormap ?? this.colormap,
       colorScheme: colorScheme ?? this.colorScheme,
       freqScale: freqScale ?? this.freqScale,
+      inputDeviceId:
+          clearInputDevice ? null : (inputDeviceId ?? this.inputDeviceId),
+      inputDeviceLabel: clearInputDevice
+          ? null
+          : (inputDeviceLabel ?? this.inputDeviceLabel),
     );
   }
 
@@ -82,6 +96,8 @@ class AppSettings {
         'colormap': colormap.name,
         'color_scheme': colorScheme.name,
         'freq_scale': freqScale.name,
+        if (inputDeviceId != null) 'input_device_id': inputDeviceId,
+        if (inputDeviceLabel != null) 'input_device_label': inputDeviceLabel,
       };
 
   factory AppSettings.fromMap(Map<String, dynamic> map) {
@@ -107,6 +123,8 @@ class AppSettings {
         (e) => e.name == map['freq_scale'],
         orElse: () => d.freqScale,
       ),
+      inputDeviceId: map['input_device_id'] as String?,
+      inputDeviceLabel: map['input_device_label'] as String?,
     );
   }
 
@@ -114,7 +132,8 @@ class AppSettings {
   bool requiresPipelineRestart(AppSettings other) {
     return sampleRate != other.sampleRate ||
         fftSize != other.fftSize ||
-        hopSize != other.hopSize;
+        hopSize != other.hopSize ||
+        inputDeviceId != other.inputDeviceId;
   }
 
   static int _asInt(Object? v, int fallback) {
@@ -142,7 +161,9 @@ class AppSettings {
         other.maxDb == maxDb &&
         other.colormap == colormap &&
         other.colorScheme == colorScheme &&
-        other.freqScale == freqScale;
+        other.freqScale == freqScale &&
+        other.inputDeviceId == inputDeviceId &&
+        other.inputDeviceLabel == inputDeviceLabel;
   }
 
   @override
@@ -158,6 +179,8 @@ class AppSettings {
         colormap,
         colorScheme,
         freqScale,
+        inputDeviceId,
+        inputDeviceLabel,
       );
 }
 

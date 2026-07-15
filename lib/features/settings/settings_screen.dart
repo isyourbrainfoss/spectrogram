@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:record/record.dart';
 import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/settings_repository.dart';
 import 'package:spectrogram/services/spectrogram_engine.dart';
@@ -21,11 +22,15 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late AppSettings _draft;
+  List<InputDevice> _devices = const [];
+  bool _loadingDevices = false;
+  String? _deviceError;
 
   @override
   void initState() {
     super.initState();
     _draft = widget.engine.settings;
+    _refreshDevices();
   }
 
   @override
@@ -37,6 +42,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (_draft == oldWidget.engine.settings) {
         _draft = widget.engine.settings;
       }
+    }
+  }
+
+  Future<void> _refreshDevices() async {
+    if (!mounted) return;
+    setState(() {
+      _loadingDevices = true;
+      _deviceError = null;
+    });
+    try {
+      // Permission helps Android populate the device list.
+      // Errors (e.g. missing plugin in tests) fall through to empty list.
+      try {
+        await widget.engine.hasPermissionForDevices();
+      } catch (_) {}
+      final devices = await widget.engine.listInputDevices();
+      if (!mounted) return;
+      setState(() {
+        _devices = devices;
+        _loadingDevices = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _devices = const [];
+        _deviceError = e.toString();
+        _loadingDevices = false;
+      });
     }
   }
 
@@ -52,9 +85,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _apply(AppSettings.defaults);
   }
 
+  Future<void> _selectDevice(String? id) async {
+    if (id == null) {
+      await _apply(_draft.copyWith(clearInputDevice: true));
+      return;
+    }
+    InputDevice? match;
+    for (final d in _devices) {
+      if (d.id == id) {
+        match = d;
+        break;
+      }
+    }
+    await _apply(
+      _draft.copyWith(
+        inputDeviceId: id,
+        inputDeviceLabel: match?.label ?? id,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = _draft;
+    final deviceValue = _deviceDropdownValue(s);
 
     return Scaffold(
       appBar: AppBar(
@@ -128,6 +182,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Text('Linear'),
                 ),
               ],
+            ),
+          ),
+          const _SectionHeader('Input'),
+          ListTile(
+            title: const Text('Microphone'),
+            subtitle: Text(
+              _loadingDevices
+                  ? 'Scanning devices…'
+                  : _deviceError != null
+                      ? 'Could not list devices — $_deviceError'
+                      : (s.inputDeviceLabel ??
+                          s.inputDeviceId ??
+                          'System default'),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Refresh device list',
+                  onPressed: _loadingDevices ? null : _refreshDevices,
+                  // Avoid animated indicators so widget tests can pumpAndSettle.
+                  icon: Icon(
+                    _loadingDevices ? Icons.hourglass_top : Icons.refresh,
+                  ),
+                ),
+                DropdownButton<String?>(
+                  value: deviceValue,
+                  hint: const Text('Default'),
+                  onChanged: _loadingDevices
+                      ? null
+                      : (v) {
+                          _selectDevice(v);
+                        },
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('System default'),
+                    ),
+                    ..._devices.map(
+                      (d) => DropdownMenuItem<String?>(
+                        value: d.id,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 220),
+                          child: Text(
+                            d.label.isEmpty ? d.id : d.label,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Keep a saved device visible even if not currently listed.
+                    if (s.inputDeviceId != null &&
+                        !_devices.any((d) => d.id == s.inputDeviceId))
+                      DropdownMenuItem<String?>(
+                        value: s.inputDeviceId,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 220),
+                          child: Text(
+                            '${s.inputDeviceLabel ?? s.inputDeviceId} (unavailable)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'Android and Linux both list capture devices via the system audio stack. '
+              'Changing the mic restarts capture if it is running.',
+              style: TextStyle(fontSize: 12),
             ),
           ),
           const _SectionHeader('Audio & FFT'),
@@ -267,6 +395,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  /// Dropdown value must be either null or one of the item values.
+  String? _deviceDropdownValue(AppSettings s) {
+    final id = s.inputDeviceId;
+    if (id == null) return null;
+    if (_devices.any((d) => d.id == id)) return id;
+    // Keep selection even if device is temporarily missing.
+    return id;
   }
 
   static String _colormapLabel(ColormapKind c) => switch (c) {
