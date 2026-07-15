@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Spectrogram
+Comment=Live microphone spectrogram
+Exec=spectrogram
+Icon=com.isyourbrainfoss.Spectrogram
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Science;
+StartupWMClass=spectrogram

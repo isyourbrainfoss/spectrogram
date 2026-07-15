@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.isyourbrainfoss.Spectrogram</id>
+  <name>Spectrogram</name>
+  <summary>Live microphone spectrogram for Linux</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      Capture the microphone and view a real-time spectrogram or spectrum plot
+      with crosshair frequency and dBFS readout. Adaptive UI for desktop and
+      Linux phones.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.isyourbrainfoss.Spectrogram.desktop</launchable>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Science</category>
+  </categories>
+  <developer_name>isyourbrainfoss</developer_name>
+  <url type="homepage">https://github.com/isyourbrainfoss/spectrogram</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-07-15"/>
+  </releases>
+</component>

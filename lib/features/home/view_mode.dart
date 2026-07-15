@@ -1,0 +1,1 @@
+enum PlotViewMode { spectrogram, spectrum }
