@@ -45,6 +45,9 @@ class _SpectrogramViewState extends State<SpectrogramView>
   FreqScale? _lastScale;
   double? _lastMinFreq;
   double? _lastMaxFreq;
+  ColormapKind? _lastColormap;
+  double? _lastMinDb;
+  double? _lastMaxDb;
   int _gen = 0;
   bool _rebuildQueued = false;
   final _pointer = PlotPointerController();
@@ -103,6 +106,9 @@ class _SpectrogramViewState extends State<SpectrogramView>
     _lastScale = null;
     _lastMinFreq = null;
     _lastMaxFreq = null;
+    _lastColormap = null;
+    _lastMinDb = null;
+    _lastMaxDb = null;
   }
 
   void _onEngine() => _ensureImage();
@@ -124,14 +130,18 @@ class _SpectrogramViewState extends State<SpectrogramView>
       return;
     }
 
-    final needsRebuild = _image == null ||
+    final needsRebuild =
+        _image == null ||
         e.filledColumns != _lastFilled ||
         e.writeIndex != _lastWrite ||
         e.viewStart != _lastViewStart ||
         e.viewColumnCount != _lastViewCount ||
         s.freqScale != _lastScale ||
         s.minFreqHz != _lastMinFreq ||
-        s.maxFreqHz != _lastMaxFreq;
+        s.maxFreqHz != _lastMaxFreq ||
+        s.colormap != _lastColormap ||
+        s.minDb != _lastMinDb ||
+        s.maxDb != _lastMaxDb;
 
     if (!needsRebuild) return;
 
@@ -142,6 +152,9 @@ class _SpectrogramViewState extends State<SpectrogramView>
     _lastScale = s.freqScale;
     _lastMinFreq = s.minFreqHz;
     _lastMaxFreq = s.maxFreqHz;
+    _lastColormap = s.colormap;
+    _lastMinDb = s.minDb;
+    _lastMaxDb = s.maxDb;
 
     if (_rebuildQueued) return;
     _rebuildQueued = true;
@@ -246,12 +259,12 @@ class _SpectrogramViewState extends State<SpectrogramView>
         Expanded(
           child: PlotChrome(
             yTicks: yTicks,
-            yAxisTitle: s.freqScale == FreqScale.logarithmic ? 'Hz (log)' : 'Hz',
+            yAxisTitle: s.freqScale == FreqScale.logarithmic
+                ? 'Hz (log)'
+                : 'Hz',
             xMinLabel: leftT,
             xMidLabel: e.canZoom
-                ? (e.canPan
-                    ? 'wheel zoom · shift+wheel pan'
-                    : 'wheel zoom')
+                ? (e.canPan ? 'wheel zoom · shift+wheel pan' : 'wheel zoom')
                 : 'time',
             xMaxLabel: rightT,
             child: LayoutBuilder(
@@ -295,7 +308,8 @@ class _SpectrogramViewState extends State<SpectrogramView>
                       ev.localPosition,
                       size,
                       ev.kind,
-                      current: widget.crosshair ??
+                      current:
+                          widget.crosshair ??
                           const CrosshairPoint(nx: 0.5, ny: 0.5),
                     );
                     if (p != null) _emit(p);
@@ -334,7 +348,8 @@ class _SpectrogramViewState extends State<SpectrogramView>
                       final p = _pointer.onLongPressMove(
                         details.localPosition,
                         size,
-                        current: widget.crosshair ??
+                        current:
+                            widget.crosshair ??
                             const CrosshairPoint(nx: 0.5, ny: 0.5),
                       );
                       if (p != null) _emit(p);
@@ -343,8 +358,7 @@ class _SpectrogramViewState extends State<SpectrogramView>
                     child: MouseRegion(
                       onHover: (ev) {
                         if (widget.crosshair == null) return;
-                        final p =
-                            _pointer.localToPoint(ev.localPosition, size);
+                        final p = _pointer.localToPoint(ev.localPosition, size);
                         _pointer.fingerLocal = ev.localPosition;
                         _emit(p);
                       },
@@ -355,9 +369,9 @@ class _SpectrogramViewState extends State<SpectrogramView>
                             child: CustomPaint(
                               painter: _SpectrogramPainter(
                                 image: _image,
-                                emptyColor: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest,
+                                emptyColor: Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
                                 layoutSize: size,
                               ),
                               size: size,
@@ -413,7 +427,9 @@ class _SpectrogramViewState extends State<SpectrogramView>
                   tooltip: 'Pan left (older)',
                   visualDensity: VisualDensity.compact,
                   iconSize: 18,
-                  onPressed: e.canPan ? () => e.panViewport(-e.viewColumnCount ~/ 4) : null,
+                  onPressed: e.canPan
+                      ? () => e.panViewport(-e.viewColumnCount ~/ 4)
+                      : null,
                   icon: const Icon(Icons.chevron_left),
                 ),
                 IconButton(
@@ -434,7 +450,9 @@ class _SpectrogramViewState extends State<SpectrogramView>
                   tooltip: 'Pan right (newer)',
                   visualDensity: VisualDensity.compact,
                   iconSize: 18,
-                  onPressed: e.canPan ? () => e.panViewport(e.viewColumnCount ~/ 4) : null,
+                  onPressed: e.canPan
+                      ? () => e.panViewport(e.viewColumnCount ~/ 4)
+                      : null,
                   icon: const Icon(Icons.chevron_right),
                 ),
                 IconButton(

@@ -101,12 +101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final label = match == null
         ? id
         : InputDeviceLabels.format(match, all: _devices);
-    await _apply(
-      _draft.copyWith(
-        inputDeviceId: id,
-        inputDeviceLabel: label,
-      ),
-    );
+    await _apply(_draft.copyWith(inputDeviceId: id, inputDeviceLabel: label));
   }
 
   String _selectedDeviceSubtitle(AppSettings s) {
@@ -127,9 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
-        actions: [
-          TextButton(onPressed: _reset, child: const Text('Reset')),
-        ],
+        actions: [TextButton(onPressed: _reset, child: const Text('Reset'))],
       ),
       body: ListView(
         children: [
@@ -198,6 +191,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
+          SwitchListTile(
+            title: const Text('Peak hold'),
+            subtitle: const Text(
+              'Ghost envelope of the highest level per bin on the FFT view',
+            ),
+            value: s.peakHold,
+            onChanged: (v) => _apply(s.copyWith(peakHold: v)),
+          ),
+          if (s.peakHold)
+            ListTile(
+              title: const Text('Peak-hold decay'),
+              subtitle: Text(
+                s.peakHoldDecayDbPerSec <= 0
+                    ? 'Infinite — holds until reset (P)'
+                    : '${s.peakHoldDecayDbPerSec.round()} dB/s',
+              ),
+              trailing: DropdownButton<double>(
+                value: _decayValue(s.peakHoldDecayDbPerSec),
+                onChanged: (v) {
+                  if (v != null) _apply(s.copyWith(peakHoldDecayDbPerSec: v));
+                },
+                items: const [
+                  DropdownMenuItem(value: 0.0, child: Text('Infinite')),
+                  DropdownMenuItem(value: 3.0, child: Text('3 dB/s')),
+                  DropdownMenuItem(value: 6.0, child: Text('6 dB/s')),
+                  DropdownMenuItem(value: 12.0, child: Text('12 dB/s')),
+                  DropdownMenuItem(value: 24.0, child: Text('24 dB/s')),
+                ],
+              ),
+            ),
           const _SectionHeader('Input'),
           ListTile(
             title: const Text('Microphone'),
@@ -205,22 +228,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _loadingDevices
                   ? 'Scanning devices…'
                   : _deviceError != null
-                      ? 'Could not list devices — $_deviceError'
-                      : _selectedDeviceSubtitle(s),
+                  ? 'Could not list devices — $_deviceError'
+                  : _selectedDeviceSubtitle(s),
             ),
             isThreeLine: true,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: 'Refresh device list',
-                  onPressed: _loadingDevices ? null : _refreshDevices,
-                  // Avoid animated indicators so widget tests can pumpAndSettle.
-                  icon: Icon(
-                    _loadingDevices ? Icons.hourglass_top : Icons.refresh,
-                  ),
-                ),
-                DropdownButton<String?>(
+            trailing: IconButton(
+              tooltip: 'Refresh device list',
+              onPressed: _loadingDevices ? null : _refreshDevices,
+              // Avoid animated indicators so widget tests can pumpAndSettle.
+              icon: Icon(_loadingDevices ? Icons.hourglass_top : Icons.refresh),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                labelText: 'Input device',
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  isExpanded: true,
                   value: deviceValue,
                   hint: const Text('Default'),
                   onChanged: _loadingDevices
@@ -236,31 +265,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ..._devices.map(
                       (d) => DropdownMenuItem<String?>(
                         value: d.id,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 260),
-                          child: Text(
-                            InputDeviceLabels.format(d, all: _devices),
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                        child: Text(
+                          InputDeviceLabels.format(d, all: _devices),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ),
-                    // Keep a saved device visible even if not currently listed.
                     if (s.inputDeviceId != null &&
                         !_devices.any((d) => d.id == s.inputDeviceId))
                       DropdownMenuItem<String?>(
                         value: s.inputDeviceId,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 260),
-                          child: Text(
-                            '${s.inputDeviceLabel ?? s.inputDeviceId} (unavailable)',
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                        child: Text(
+                          '${s.inputDeviceLabel ?? s.inputDeviceId} (unavailable)',
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
           const Padding(
@@ -284,12 +306,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (v != null) _apply(s.copyWith(sampleRate: v));
               },
               items: AppSettings.allowedSampleRates
-                  .map(
-                    (r) => DropdownMenuItem(
-                      value: r,
-                      child: Text('$r Hz'),
-                    ),
-                  )
+                  .map((r) => DropdownMenuItem(value: r, child: Text('$r Hz')))
                   .toList(),
             ),
           ),
@@ -308,9 +325,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 }
               },
               items: AppSettings.allowedFftSizes
-                  .map(
-                    (n) => DropdownMenuItem(value: n, child: Text('$n')),
-                  )
+                  .map((n) => DropdownMenuItem(value: n, child: Text('$n')))
                   .toList(),
             ),
           ),
@@ -323,9 +338,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (v != null) _apply(s.copyWith(hopSize: v));
               },
               items: _hopOptions(s.fftSize)
-                  .map(
-                    (h) => DropdownMenuItem(value: h, child: Text('$h')),
-                  )
+                  .map((h) => DropdownMenuItem(value: h, child: Text('$h')))
                   .toList(),
             ),
           ),
@@ -337,7 +350,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             min: 2,
             max: 30,
             divisions: 28,
-            onChanged: (v) => _apply(s.copyWith(timeWindowSec: v.roundToDouble())),
+            onChanged: (v) =>
+                _apply(s.copyWith(timeWindowSec: v.roundToDouble())),
           ),
           _SliderTile(
             title: 'History kept in memory',
@@ -419,17 +433,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'Defaults are tuned for speech and music on phone mics. '
               'Larger FFT improves frequency resolution; smaller hop improves time smoothness.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.6),
-                  ),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withValues(alpha: 0.6),
+              ),
             ),
           ),
           const SizedBox(height: 32),
         ],
       ),
     );
+  }
+
+  static double _decayValue(double v) {
+    const opts = [0.0, 3.0, 6.0, 12.0, 24.0];
+    var best = opts.first;
+    var bestD = (v - best).abs();
+    for (final o in opts) {
+      final d = (v - o).abs();
+      if (d < bestD) {
+        best = o;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   /// Dropdown value must be either null or one of the item values.
@@ -442,17 +469,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   static String _colormapLabel(ColormapKind c) => switch (c) {
-        ColormapKind.viridis => 'Viridis',
-        ColormapKind.magma => 'Magma',
-        ColormapKind.turbo => 'Turbo',
-        ColormapKind.grayscale => 'Grayscale',
-      };
+    ColormapKind.viridis => 'Viridis',
+    ColormapKind.magma => 'Magma',
+    ColormapKind.turbo => 'Turbo',
+    ColormapKind.grayscale => 'Grayscale',
+  };
 
   static List<int> _hopOptions(int fft) {
-    final opts = <int>{fft ~/ 8, fft ~/ 4, fft ~/ 2, fft}
-        .where((h) => h > 0 && h <= fft)
-        .toList()
-      ..sort();
+    final opts = <int>{
+      fft ~/ 8,
+      fft ~/ 4,
+      fft ~/ 2,
+      fft,
+    }.where((h) => h > 0 && h <= fft).toList()..sort();
     return opts;
   }
 

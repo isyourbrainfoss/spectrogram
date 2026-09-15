@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
+import 'package:spectrogram/dsp/spectrum_analysis.dart';
 import 'package:spectrogram/features/plot/axis_labels.dart';
 import 'package:spectrogram/features/plot/crosshair_overlay.dart';
 import 'package:spectrogram/features/plot/plot_pointer.dart';
@@ -87,8 +88,17 @@ class _SpectrumViewState extends State<SpectrumView> {
       maxTicks: 7,
     );
 
-    final db = Float32List.fromList(engine.displayDb);
-    final freqs = Float32List.fromList(engine.displayFreqs);
+    final hasData = engine.filledColumns > 0;
+    final db = hasData
+        ? Float32List.fromList(engine.displayDb)
+        : Float32List(0);
+    final freqs = hasData
+        ? Float32List.fromList(engine.displayFreqs)
+        : Float32List(0);
+    final hold = s.peakHold && hasData
+        ? Float32List.fromList(engine.peakHoldDb)
+        : null;
+    final peaks = hasData ? engine.spectrumPeaks() : const <SpectrumPeak>[];
 
     return PlotChrome(
       yTicks: [
@@ -123,8 +133,8 @@ class _SpectrumViewState extends State<SpectrumView> {
                 ev.localPosition,
                 size,
                 ev.kind,
-                current: widget.crosshair ??
-                    const CrosshairPoint(nx: 0.5, ny: 0.5),
+                current:
+                    widget.crosshair ?? const CrosshairPoint(nx: 0.5, ny: 0.5),
               );
               if (p != null) _emit(p);
             },
@@ -145,7 +155,8 @@ class _SpectrumViewState extends State<SpectrumView> {
                 final p = _pointer.onLongPressMove(
                   details.localPosition,
                   size,
-                  current: widget.crosshair ??
+                  current:
+                      widget.crosshair ??
                       const CrosshairPoint(nx: 0.5, ny: 0.5),
                 );
                 if (p != null) _emit(p);
@@ -166,6 +177,8 @@ class _SpectrumViewState extends State<SpectrumView> {
                         painter: _SpectrumPainter(
                           db: db,
                           freqs: freqs,
+                          peakHold: hold,
+                          peaks: peaks,
                           minDb: s.minDb,
                           maxDb: s.maxDb,
                           minHz: s.minFreqHz,
@@ -174,6 +187,8 @@ class _SpectrumViewState extends State<SpectrumView> {
                           freqTicks: xTicks,
                           lineColor: scheme.primary,
                           fillColor: scheme.primary.withValues(alpha: 0.22),
+                          holdColor: scheme.tertiary,
+                          peakColor: scheme.tertiary,
                           gridColor: scheme.outline.withValues(alpha: 0.25),
                           bgColor: scheme.surfaceContainerHighest,
                           layoutSize: size,
@@ -186,8 +201,9 @@ class _SpectrumViewState extends State<SpectrumView> {
                     if (widget.crosshair != null)
                       Builder(
                         builder: (context) {
-                          final sample =
-                              engine.sampleSpectrum(widget.crosshair!.nx);
+                          final sample = engine.sampleSpectrum(
+                            widget.crosshair!.nx,
+                          );
                           if (sample == null) return const SizedBox.shrink();
                           final span = (s.maxDb - s.minDb).abs();
                           final ny = span < 1e-9
@@ -224,6 +240,8 @@ class _SpectrumPainter extends CustomPainter {
   _SpectrumPainter({
     required this.db,
     required this.freqs,
+    required this.peakHold,
+    required this.peaks,
     required this.minDb,
     required this.maxDb,
     required this.minHz,
@@ -232,6 +250,8 @@ class _SpectrumPainter extends CustomPainter {
     required this.freqTicks,
     required this.lineColor,
     required this.fillColor,
+    required this.holdColor,
+    required this.peakColor,
     required this.gridColor,
     required this.bgColor,
     required this.layoutSize,
@@ -239,6 +259,8 @@ class _SpectrumPainter extends CustomPainter {
 
   final Float32List db;
   final Float32List freqs;
+  final Float32List? peakHold;
+  final List<SpectrumPeak> peaks;
   final double minDb;
   final double maxDb;
   final double minHz;
@@ -247,6 +269,8 @@ class _SpectrumPainter extends CustomPainter {
   final List<AxisTick> freqTicks;
   final Color lineColor;
   final Color fillColor;
+  final Color holdColor;
+  final Color peakColor;
   final Color gridColor;
   final Color bgColor;
   final Size layoutSize;
@@ -299,6 +323,49 @@ class _SpectrumPainter extends CustomPainter {
         ..strokeWidth = 2
         ..isAntiAlias = true,
     );
+
+    final hold = peakHold;
+    if (hold != null && hold.isNotEmpty) {
+      final holdPath = Path();
+      final m = math.min(hold.length, freqs.length);
+      for (var i = 0; i < m; i++) {
+        final nx = FreqAxis.freqToNorm(freqs[i], minHz, maxHz, scale);
+        final x = nx * size.width;
+        final t = ((hold[i] - minDb) / span).clamp(0.0, 1.0);
+        final y = size.height - t * size.height;
+        if (i == 0) {
+          holdPath.moveTo(x, y);
+        } else {
+          holdPath.lineTo(x, y);
+        }
+      }
+      canvas.drawPath(
+        holdPath,
+        Paint()
+          ..color = holdColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.25
+          ..isAntiAlias = true,
+      );
+    }
+
+    if (peaks.isNotEmpty) {
+      final paint = Paint()
+        ..color = peakColor
+        ..style = PaintingStyle.fill;
+      for (final peak in peaks) {
+        final nx = FreqAxis.freqToNorm(peak.hz, minHz, maxHz, scale);
+        final t = ((peak.db - minDb) / span).clamp(0.0, 1.0);
+        final x = nx * size.width;
+        final y = size.height - t * size.height;
+        final tri = Path()
+          ..moveTo(x, y - 1)
+          ..lineTo(x - 4, y - 9)
+          ..lineTo(x + 4, y - 9)
+          ..close();
+        canvas.drawPath(tri, paint);
+      }
+    }
   }
 
   @override
@@ -308,11 +375,28 @@ class _SpectrumPainter extends CustomPainter {
         old.maxDb != maxDb ||
         old.scale != scale ||
         old.lineColor != lineColor ||
-        old.layoutSize != layoutSize) {
+        old.holdColor != holdColor ||
+        old.layoutSize != layoutSize ||
+        old.peaks.length != peaks.length ||
+        (old.peakHold == null) != (peakHold == null) ||
+        (old.peakHold?.length ?? 0) != (peakHold?.length ?? 0)) {
       return true;
     }
     for (var i = 0; i < db.length; i++) {
       if (old.db[i] != db[i]) return true;
+    }
+    final hold = peakHold;
+    final oldHold = old.peakHold;
+    if (hold != null && oldHold != null) {
+      final m = math.min(hold.length, oldHold.length);
+      for (var i = 0; i < m; i++) {
+        if (hold[i] != oldHold[i]) return true;
+      }
+    }
+    for (var i = 0; i < peaks.length; i++) {
+      if (peaks[i].bin != old.peaks[i].bin || peaks[i].db != old.peaks[i].db) {
+        return true;
+      }
     }
     return false;
   }

@@ -3,12 +3,16 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spectrogram/audio/input_device_labels.dart';
+import 'package:spectrogram/audio/spectrum_csv.dart';
 import 'package:spectrogram/audio/wav_io.dart';
 import 'package:spectrogram/dsp/colormap.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/dsp/pcm.dart';
+import 'package:spectrogram/dsp/spectrum_analysis.dart';
 import 'package:spectrogram/dsp/stft_processor.dart';
 import 'package:spectrogram/models/app_settings.dart';
+import 'package:spectrogram/services/audio_capture_service.dart';
+import 'package:spectrogram/services/spectrogram_engine.dart';
 import 'package:record/record.dart';
 
 void main() {
@@ -94,6 +98,8 @@ void main() {
         hopSize: 1024,
         colormap: ColormapKind.turbo,
         colorScheme: ThemePreference.dark,
+        peakHold: false,
+        peakHoldDecayDbPerSec: 12,
         inputDeviceId: 'hw:1,0',
         inputDeviceLabel: 'USB Mic',
       );
@@ -205,6 +211,184 @@ void main() {
       final values = ticks.map((t) => t.hz).toList();
       expect(values.any((h) => (h - 100).abs() < 1), isTrue);
       expect(values.any((h) => (h - 1000).abs() < 1), isTrue);
+    });
+
+    test('binForFreq picks nearest', () {
+      final freqs = Float32List.fromList([100, 200, 400, 800]);
+      expect(FreqAxis.binForFreq(freqs, 100), 0);
+      expect(FreqAxis.binForFreq(freqs, 190), 1);
+      expect(FreqAxis.binForFreq(freqs, 800), 3);
+    });
+  });
+
+  group('peak hold', () {
+    test('keeps the max and decays toward current', () {
+      final hold = Float32List.fromList([0, -6, -20]);
+      final current = Float32List.fromList([-12, -3, -40]);
+      applyPeakHold(
+        hold: hold,
+        current: current,
+        decayDbPerSec: 6,
+        dtSec: 0.5, // dt is clamped at 0.5 s so a pause cannot wipe the hold
+      );
+      // 0 - 3 = -3, vs current -12 → -3
+      expect(hold[0], closeTo(-3, 1e-9));
+      // -6 - 3 = -9, vs current -3 → -3
+      expect(hold[1], closeTo(-3, 1e-9));
+      // -20 - 3 = -23, vs current -40 → -23
+      expect(hold[2], closeTo(-23, 1e-9));
+    });
+
+    test('infinite hold never decays', () {
+      final hold = Float32List.fromList([0]);
+      applyPeakHold(
+        hold: hold,
+        current: Float32List.fromList([-90]),
+        decayDbPerSec: 0,
+        dtSec: 10,
+      );
+      expect(hold[0], closeTo(0, 1e-9));
+    });
+  });
+
+  group('spectrum peaks', () {
+    test('parabolic offset leans toward the higher neighbor', () {
+      // yRight closer to the peak than yLeft → positive offset.
+      final d = parabolicOffset(-20, -6, -12);
+      expect(d, greaterThan(0));
+      expect(d, lessThan(0.5));
+    });
+
+    test('finds two well-separated local maxima', () {
+      final db = Float32List(32);
+      final freqs = Float32List(32);
+      for (var i = 0; i < 32; i++) {
+        db[i] = -80;
+        freqs[i] = i * 100.0;
+      }
+      db[8] = -10;
+      db[7] = -18;
+      db[9] = -20;
+      db[20] = -12;
+      db[19] = -22;
+      db[21] = -19;
+      final peaks = findSpectrumPeaks(
+        db: db,
+        freqs: freqs,
+        floorDb: -40,
+        maxPeaks: 8,
+        minSeparationBins: 3,
+      );
+      expect(peaks.length, 2);
+      expect(peaks.first.hz, closeTo(800, 50));
+      expect(peaks.last.hz, closeTo(2000, 50));
+    });
+  });
+
+  group('spectrum CSV', () {
+    test('marks peak bins', () {
+      final csv = formatSpectrumCsv(
+        freqs: Float32List.fromList([100, 200, 300]),
+        db: Float32List.fromList([-20, -5, -40]),
+        peakHold: Float32List.fromList([-10, -5, -30]),
+        peakBins: {1},
+      );
+      final lines = csv.trim().split('\n');
+      expect(lines.first, 'frequency_hz,dbfs,peak_hold_dbfs,is_peak');
+      expect(lines[2], contains(',1'));
+      expect(lines[1].endsWith(',0'), isTrue);
+    });
+  });
+
+  group('SpectrogramEngine', () {
+    test('1 kHz import peaks near 1 kHz and CSV is non-empty', () async {
+      final engine = SpectrogramEngine(
+        capture: AudioCaptureService.none(),
+        settings: const AppSettings(
+          sampleRate: 48000,
+          fftSize: 2048,
+          hopSize: 512,
+        ),
+      );
+      addTearDown(engine.dispose);
+
+      final sine = generateSine(
+        freqHz: 1000,
+        sampleRate: 48000,
+        length: 48000,
+        amplitude: 1.0,
+      );
+      await engine.analyzeMono(sine, 48000, label: 'tone.wav');
+      expect(engine.filledColumns, greaterThan(8));
+      expect(engine.peakFreqHz, closeTo(1000, 40));
+      expect(engine.peakDb, greaterThan(-12));
+
+      final peaks = engine.spectrumPeaks(maxPeaks: 4);
+      expect(peaks, isNotEmpty);
+      final strongest = peaks.reduce((a, b) => a.db >= b.db ? a : b);
+      expect(strongest.hz, closeTo(1000, 80));
+
+      final csv = engine.exportSpectrumCsv();
+      expect(csv, isNotNull);
+      expect(csv!, contains('frequency_hz,dbfs'));
+      expect(csv.contains('is_peak'), isTrue);
+    });
+
+    test('recolors stored columns when colormap changes', () async {
+      final engine = SpectrogramEngine(
+        capture: AudioCaptureService.none(),
+        settings: const AppSettings(
+          sampleRate: 8000,
+          fftSize: 512,
+          hopSize: 128,
+          colormap: ColormapKind.viridis,
+        ),
+      );
+      addTearDown(engine.dispose);
+
+      final sine = generateSine(
+        freqHz: 440,
+        sampleRate: 8000,
+        length: 8000,
+        amplitude: 0.8,
+      );
+      await engine.analyzeMono(sine, 8000);
+      expect(engine.filledColumns, greaterThan(0));
+      final mid = engine.displayBins ~/ 2;
+      final before = engine.colorColumnAt(engine.filledColumns ~/ 2)[mid];
+
+      await engine.applySettings(
+        engine.settings.copyWith(colormap: ColormapKind.grayscale),
+      );
+      final after = engine.colorColumnAt(engine.filledColumns ~/ 2)[mid];
+      expect(after, isNot(equals(before)));
+    });
+
+    test('freeze blocks new spectrogram columns', () async {
+      final engine = SpectrogramEngine(
+        capture: AudioCaptureService.none(),
+        settings: const AppSettings(
+          sampleRate: 8000,
+          fftSize: 512,
+          hopSize: 128,
+        ),
+      );
+      addTearDown(engine.dispose);
+
+      final sine = generateSine(
+        freqHz: 440,
+        sampleRate: 8000,
+        length: 4000,
+        amplitude: 0.5,
+      );
+      await engine.analyzeMono(sine, 8000);
+      final filled = engine.filledColumns;
+      engine.toggleFreeze();
+      expect(engine.isFrozen, isTrue);
+      // Import already stopped; freeze is a flag until the next live frames.
+      expect(engine.filledColumns, filled);
+      engine.toggleFreeze();
+      expect(engine.isFrozen, isFalse);
     });
   });
 }

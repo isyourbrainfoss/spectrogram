@@ -4,10 +4,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
+import 'package:spectrogram/audio/spectrum_csv.dart';
 import 'package:spectrogram/audio/wav_io.dart';
 import 'package:spectrogram/dsp/colormap.dart';
 import 'package:spectrogram/dsp/freq_axis.dart';
 import 'package:spectrogram/dsp/pcm.dart';
+import 'package:spectrogram/dsp/spectrum_analysis.dart';
 import 'package:spectrogram/dsp/stft_processor.dart';
 import 'package:spectrogram/models/app_settings.dart';
 import 'package:spectrogram/services/audio_capture_service.dart';
@@ -16,11 +18,9 @@ enum EngineStatus { idle, starting, running, error, noPermission }
 
 /// Coordinates mic capture / file import → STFT → ring buffers for the UI.
 class SpectrogramEngine extends ChangeNotifier {
-  SpectrogramEngine({
-    AudioCaptureService? capture,
-    AppSettings? settings,
-  })  : _capture = capture ?? AudioCaptureService(),
-        _settings = settings ?? AppSettings.defaults {
+  SpectrogramEngine({AudioCaptureService? capture, AppSettings? settings})
+    : _capture = capture ?? AudioCaptureService(),
+      _settings = settings ?? AppSettings.defaults {
     _rebuildPipeline();
   }
 
@@ -47,6 +47,12 @@ class SpectrogramEngine extends ChangeNotifier {
   late Float32List _latestDb;
   late Float32List _displayDb;
   late Float32List _displayFreqs;
+  late Float32List _peakHoldDb;
+  bool _peakHoldPrimed = false;
+  DateTime _lastPeakHoldAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// When true, STFT columns stay put while spectrum / peak-hold still update.
+  bool _frozen = false;
 
   EngineStatus _status = EngineStatus.idle;
   String? _errorMessage;
@@ -62,6 +68,7 @@ class SpectrogramEngine extends ChangeNotifier {
   bool _recording = false;
   BytesBuilder? _recordBuffer; // grows only while actively "recording to file"
   int? _recordSampleRate;
+
   /// Continuous ring of recent PCM16 mono (same length as history window).
   late Uint8List _pcmRing;
   int _pcmWrite = 0;
@@ -102,12 +109,15 @@ class SpectrogramEngine extends ChangeNotifier {
 
   bool get followLive => _followLive;
   bool get canPan => _filled > viewColumnCount;
+
   /// Zoom is allowed whenever we have more than the minimum visible columns.
   bool get canZoom => _filled > 32;
 
   Float32List get latestDb => _latestDb;
   Float32List get displayDb => _displayDb;
   Float32List get displayFreqs => _displayFreqs;
+  Float32List get peakHoldDb => _peakHoldDb;
+  bool get isFrozen => _frozen;
   ColorMap get colorMap => _colorMap;
 
   /// Approximate recorded duration while recording (or 0).
@@ -141,7 +151,8 @@ class SpectrogramEngine extends ChangeNotifier {
 
   Future<void> applySettings(AppSettings next) async {
     final prev = _settings;
-    final structural = prev.sampleRate != next.sampleRate ||
+    final structural =
+        prev.sampleRate != next.sampleRate ||
         prev.fftSize != next.fftSize ||
         prev.hopSize != next.hopSize ||
         prev.timeWindowSec != next.timeWindowSec ||
@@ -156,13 +167,17 @@ class SpectrogramEngine extends ChangeNotifier {
     }
 
     _settings = next;
-    if (structural && _sourceSampleRate == null) {
-      _rebuildPipeline();
-    } else if (structural && _sourceSampleRate != null) {
-      // Keep imported sample rate override but rebuild bins.
+    if (structural) {
+      // Live or imported: rebuild bins/history. Imported sample rate is kept
+      // via [_sourceSampleRate] inside [_rebuildPipeline].
       _rebuildPipeline();
     } else {
       _colorMap = ColorMap.of(_settings.colormap);
+      final recolor =
+          prev.colormap != next.colormap ||
+          prev.minDb != next.minDb ||
+          prev.maxDb != next.maxDb;
+      if (recolor) _recolorColumns();
     }
 
     if ((restartCapture || structural) && wasRunning) {
@@ -175,10 +190,7 @@ class SpectrogramEngine extends ChangeNotifier {
   InputDevice? _resolveInputDevice() {
     final id = _settings.inputDeviceId;
     if (id == null || id.isEmpty) return null;
-    return InputDevice(
-      id: id,
-      label: _settings.inputDeviceLabel ?? id,
-    );
+    return InputDevice(id: id, label: _settings.inputDeviceLabel ?? id);
   }
 
   void _rebuildPipeline({int? capacity}) {
@@ -192,8 +204,7 @@ class SpectrogramEngine extends ChangeNotifier {
     final defaultVis = _settings.columnCount;
     _visibleColumns = defaultVis;
     // Live capture keeps a longer history for pan/zoom after stop.
-    final cols =
-        (capacity ?? _settings.historyColumnCount).clamp(32, 120000);
+    final cols = (capacity ?? _settings.historyColumnCount).clamp(32, 120000);
     _colorColumns = List.generate(cols, (_) => Uint32List(range.count));
     _dbColumns = List.generate(cols, (_) => Float32List(range.count));
     _writeIndex = 0;
@@ -203,14 +214,33 @@ class SpectrogramEngine extends ChangeNotifier {
     _latestDb = Float32List(_processor.binCount);
     _displayDb = Float32List(range.count);
     _displayFreqs = Float32List(range.count);
+    _peakHoldDb = Float32List(range.count);
+    _peakHoldPrimed = false;
+    _frozen = false;
     final sr = activeSampleRate;
     for (var i = 0; i < range.count; i++) {
-      _displayFreqs[i] =
-          _processor.frequencyOfBin(range.fromBin + i, sr);
+      _displayFreqs[i] = _processor.frequencyOfBin(range.fromBin + i, sr);
     }
     _peakFreqHz = null;
     _peakDb = null;
     _initPcmRing();
+  }
+
+  void _recolorColumns() {
+    if (_filled == 0) return;
+    for (var age = 0; age < _filled; age++) {
+      final idx = _ageToIndex(age);
+      final dbCol = _dbColumns[idx];
+      final colorCol = _colorColumns[idx];
+      final n = math.min(dbCol.length, colorCol.length);
+      for (var b = 0; b < n; b++) {
+        colorCol[b] = _colorMap.mapDb(
+          dbCol[b],
+          _settings.minDb,
+          _settings.maxDb,
+        );
+      }
+    }
   }
 
   void _initPcmRing() {
@@ -289,6 +319,28 @@ class SpectrogramEngine extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Freeze the scrolling spectrogram; spectrum and peak-hold keep updating.
+  void toggleFreeze() {
+    if (!_frozen && _filled == 0) return;
+    _frozen = !_frozen;
+    notifyListeners();
+  }
+
+  void setFrozen(bool value) {
+    if (_frozen == value) return;
+    if (value && _filled == 0) return;
+    _frozen = value;
+    notifyListeners();
+  }
+
+  /// Reset the peak-hold envelope to the current spectrum.
+  void resetPeakHold() {
+    _peakHoldDb = Float32List.fromList(_displayDb);
+    _peakHoldPrimed = _displayDb.isNotEmpty;
+    _lastPeakHoldAt = DateTime.now();
+    notifyListeners();
+  }
+
   /// Visible time span in seconds (approximate).
   double get viewDurationSec => viewColumnCount * secondsPerColumn;
 
@@ -362,6 +414,7 @@ class SpectrogramEngine extends ChangeNotifier {
     if (_status != EngineStatus.noPermission) {
       _status = EngineStatus.idle;
     }
+    _frozen = false;
     notifyListeners();
   }
 
@@ -476,6 +529,9 @@ class SpectrogramEngine extends ChangeNotifier {
     _peakFreqHz = null;
     _peakDb = null;
     _sourceLabel = null;
+    _frozen = false;
+    _peakHoldPrimed = false;
+    _peakHoldDb.fillRange(0, _peakHoldDb.length, _settings.minDb);
     _initPcmRing();
     notifyListeners();
   }
@@ -497,30 +553,95 @@ class SpectrogramEngine extends ChangeNotifier {
     final sr = activeSampleRate;
     _latestDb.setAll(0, db);
 
+    for (var i = 0; i < rangeCount; i++) {
+      _displayDb[i] = db[_fromBin + i];
+    }
+    _updatePeakHold(_displayDb);
+
     final peak = StftProcessor.peakBin(
       db,
       from: _fromBin,
       to: _fromBin + rangeCount,
     );
-    _peakFreqHz = _processor.frequencyOfBin(peak, sr);
+    _peakFreqHz = interpolatePeakHz(
+      db: db,
+      peakBin: peak,
+      hzOfBin: (k) => _processor.frequencyOfBin(k, sr),
+    );
     _peakDb = db[peak];
 
-    final colorCol = _colorColumns[_writeIndex];
-    final dbCol = _dbColumns[_writeIndex];
-    for (var i = 0; i < rangeCount; i++) {
-      final v = db[_fromBin + i];
-      _displayDb[i] = v;
-      dbCol[i] = v;
-      colorCol[i] = _colorMap.mapDb(v, _settings.minDb, _settings.maxDb);
-    }
+    if (!_frozen) {
+      final colorCol = _colorColumns[_writeIndex];
+      final dbCol = _dbColumns[_writeIndex];
+      for (var i = 0; i < rangeCount; i++) {
+        final v = _displayDb[i];
+        dbCol[i] = v;
+        colorCol[i] = _colorMap.mapDb(v, _settings.minDb, _settings.maxDb);
+      }
 
-    _writeIndex = (_writeIndex + 1) % columnCount;
-    if (_filled < columnCount) _filled++;
-    // Follow live edge only while capturing and follow mode is on.
-    if (_followLive && isRunning) {
-      _viewStart = math.max(0, _filled - _visibleColumns);
+      _writeIndex = (_writeIndex + 1) % columnCount;
+      if (_filled < columnCount) _filled++;
+      // Follow live edge only while capturing and follow mode is on.
+      if (_followLive && isRunning) {
+        _viewStart = math.max(0, _filled - _visibleColumns);
+      }
     }
     _maybeNotify();
+  }
+
+  void _updatePeakHold(Float32List current) {
+    if (!_settings.peakHold) {
+      _peakHoldDb = Float32List.fromList(current);
+      _peakHoldPrimed = true;
+      _lastPeakHoldAt = DateTime.now();
+      return;
+    }
+    if (!_peakHoldPrimed || _peakHoldDb.length != current.length) {
+      _peakHoldDb = Float32List.fromList(current);
+      _peakHoldPrimed = true;
+      _lastPeakHoldAt = DateTime.now();
+      return;
+    }
+    final now = DateTime.now();
+    final dt = now.difference(_lastPeakHoldAt).inMicroseconds / 1e6;
+    _lastPeakHoldAt = now;
+    applyPeakHold(
+      hold: _peakHoldDb,
+      current: current,
+      decayDbPerSec: _settings.peakHoldDecayDbPerSec,
+      dtSec: dt,
+    );
+  }
+
+  /// Local maxima of the current (or peak-hold) spectrum in the display range.
+  List<SpectrumPeak> spectrumPeaks({int maxPeaks = 8}) {
+    if (displayBins == 0) return const [];
+    final src = _settings.peakHold && _peakHoldPrimed
+        ? _peakHoldDb
+        : _displayDb;
+    return findSpectrumPeaks(
+      db: src,
+      freqs: _displayFreqs,
+      floorDb: _settings.minDb + 6,
+      maxPeaks: maxPeaks,
+    );
+  }
+
+  /// CSV of the current spectrum (all bins, peaks flagged). Null if empty.
+  String? exportSpectrumCsv() {
+    if (displayBins == 0 || _filled == 0) return null;
+    final peaks = findSpectrumPeaks(
+      db: _displayDb,
+      freqs: _displayFreqs,
+      floorDb: _settings.minDb,
+      maxPeaks: 32,
+    );
+    return formatSpectrumCsv(
+      freqs: _displayFreqs,
+      db: _displayDb,
+      peakHold: _settings.peakHold ? _peakHoldDb : null,
+      peakBins: peakBinSet(peaks),
+    );
   }
 
   void _maybeNotify() {
@@ -534,16 +655,8 @@ class SpectrogramEngine extends ChangeNotifier {
   /// Seconds per spectrogram column (hop duration).
   double get secondsPerColumn => _settings.hopSize / activeSampleRate;
 
-  ({
-    double freqHz,
-    double db,
-    int colAge,
-    int binIndex,
-    double timeSec,
-  })? sampleSpectrogram({
-    required double normX,
-    required double normY,
-  }) {
+  ({double freqHz, double db, int colAge, int binIndex, double timeSec})?
+  sampleSpectrogram({required double normX, required double normY}) {
     if (_filled == 0 || displayBins == 0 || viewColumnCount == 0) return null;
     // Map [0,1] onto the *visible* window (pan/zoom aware).
     final vis = viewColumnCount;

@@ -7,10 +7,14 @@ Capture the microphone and view a real-time spectrogram (time × frequency × am
 ## Features
 
 - **Spectrogram mode** — scrolling STFT heatmap (time on X, frequency on Y, dBFS as color)
-- **Spectrum mode** — live frequency vs dBFS line plot
+- **Spectrum mode** — live frequency vs dBFS line plot with peak-hold envelope
+- **Freeze** — pause the scrolling spectrogram while the spectrum keeps updating
 - **Crosshair** — tap / drag for exact Hz + dBFS readout
-- **Adaptive UI** — bottom navigation on phones, navigation rail on wide screens
-- **Settings** — sample rate, FFT size, hop, time window, frequency/dB range, colormap, theme
+- **Log / linear frequency axis** — logarithmic by default (more room for lows)
+- **Keyboard shortcuts** (Linux/desktop) — Space start/stop, +/- zoom, arrows pan, S settings
+- **Export** — plot PNG, spectrum CSV (peaks flagged), WAV record/import
+- **Adaptive UI** — plot-first layout, large thumb targets on phones
+- **Settings** — sample rate, FFT size, hop, time window, history, frequency/dB range, colormap, theme, mic picker
 - **Sane defaults** — 48 kHz, FFT 2048, Hann window, hop 512, 8 s window, viridis colormap
 
 ## Install

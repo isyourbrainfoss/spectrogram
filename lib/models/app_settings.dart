@@ -5,6 +5,7 @@ class AppSettings {
     this.fftSize = 2048,
     this.hopSize = 512,
     this.timeWindowSec = 8.0,
+
     /// How much live history to keep for pan/zoom after stop and for pre-roll WAV.
     this.historySec = 60.0,
     this.minFreqHz = 20.0,
@@ -15,8 +16,16 @@ class AppSettings {
     this.colorScheme = ThemePreference.system,
     // Logarithmic is the usual audio spectrogram default (more room for lows).
     this.freqScale = FreqScale.logarithmic,
+
+    /// Spectrum peak-hold envelope (classic RTA). Off does not draw the ghost.
+    this.peakHold = true,
+
+    /// Decay of the hold envelope in dB/s. 0 = infinite hold until reset.
+    this.peakHoldDecayDbPerSec = 6.0,
+
     /// Platform device id from `record` [InputDevice.id]. Null = system default.
     this.inputDeviceId,
+
     /// Last known label for display when the device list is not loaded yet.
     this.inputDeviceLabel,
   });
@@ -33,6 +42,8 @@ class AppSettings {
   final ColormapKind colormap;
   final ThemePreference colorScheme;
   final FreqScale freqScale;
+  final bool peakHold;
+  final double peakHoldDecayDbPerSec;
   final String? inputDeviceId;
   final String? inputDeviceLabel;
 
@@ -76,6 +87,8 @@ class AppSettings {
     ColormapKind? colormap,
     ThemePreference? colorScheme,
     FreqScale? freqScale,
+    bool? peakHold,
+    double? peakHoldDecayDbPerSec,
     String? inputDeviceId,
     String? inputDeviceLabel,
     bool clearInputDevice = false,
@@ -93,8 +106,12 @@ class AppSettings {
       colormap: colormap ?? this.colormap,
       colorScheme: colorScheme ?? this.colorScheme,
       freqScale: freqScale ?? this.freqScale,
-      inputDeviceId:
-          clearInputDevice ? null : (inputDeviceId ?? this.inputDeviceId),
+      peakHold: peakHold ?? this.peakHold,
+      peakHoldDecayDbPerSec:
+          peakHoldDecayDbPerSec ?? this.peakHoldDecayDbPerSec,
+      inputDeviceId: clearInputDevice
+          ? null
+          : (inputDeviceId ?? this.inputDeviceId),
       inputDeviceLabel: clearInputDevice
           ? null
           : (inputDeviceLabel ?? this.inputDeviceLabel),
@@ -102,21 +119,23 @@ class AppSettings {
   }
 
   Map<String, dynamic> toMap() => {
-        'sample_rate': sampleRate,
-        'fft_size': fftSize,
-        'hop_size': hopSize,
-        'time_window_sec': timeWindowSec,
-        'history_sec': historySec,
-        'min_freq_hz': minFreqHz,
-        'max_freq_hz': maxFreqHz,
-        'min_db': minDb,
-        'max_db': maxDb,
-        'colormap': colormap.name,
-        'color_scheme': colorScheme.name,
-        'freq_scale': freqScale.name,
-        if (inputDeviceId != null) 'input_device_id': inputDeviceId,
-        if (inputDeviceLabel != null) 'input_device_label': inputDeviceLabel,
-      };
+    'sample_rate': sampleRate,
+    'fft_size': fftSize,
+    'hop_size': hopSize,
+    'time_window_sec': timeWindowSec,
+    'history_sec': historySec,
+    'min_freq_hz': minFreqHz,
+    'max_freq_hz': maxFreqHz,
+    'min_db': minDb,
+    'max_db': maxDb,
+    'colormap': colormap.name,
+    'color_scheme': colorScheme.name,
+    'freq_scale': freqScale.name,
+    'peak_hold': peakHold,
+    'peak_hold_decay_db_per_sec': peakHoldDecayDbPerSec,
+    if (inputDeviceId != null) 'input_device_id': inputDeviceId,
+    if (inputDeviceLabel != null) 'input_device_label': inputDeviceLabel,
+  };
 
   factory AppSettings.fromMap(Map<String, dynamic> map) {
     final d = defaults;
@@ -142,6 +161,11 @@ class AppSettings {
         (e) => e.name == map['freq_scale'],
         orElse: () => d.freqScale,
       ),
+      peakHold: _asBool(map['peak_hold'], d.peakHold),
+      peakHoldDecayDbPerSec: _asDouble(
+        map['peak_hold_decay_db_per_sec'],
+        d.peakHoldDecayDbPerSec,
+      ).clamp(0.0, 48.0),
       inputDeviceId: map['input_device_id'] as String?,
       inputDeviceLabel: map['input_device_label'] as String?,
     );
@@ -168,6 +192,11 @@ class AppSettings {
     return fallback;
   }
 
+  static bool _asBool(Object? v, bool fallback) {
+    if (v is bool) return v;
+    return fallback;
+  }
+
   @override
   bool operator ==(Object other) {
     return other is AppSettings &&
@@ -183,27 +212,31 @@ class AppSettings {
         other.colormap == colormap &&
         other.colorScheme == colorScheme &&
         other.freqScale == freqScale &&
+        other.peakHold == peakHold &&
+        other.peakHoldDecayDbPerSec == peakHoldDecayDbPerSec &&
         other.inputDeviceId == inputDeviceId &&
         other.inputDeviceLabel == inputDeviceLabel;
   }
 
   @override
   int get hashCode => Object.hash(
-        sampleRate,
-        fftSize,
-        hopSize,
-        timeWindowSec,
-        historySec,
-        minFreqHz,
-        maxFreqHz,
-        minDb,
-        maxDb,
-        colormap,
-        colorScheme,
-        freqScale,
-        inputDeviceId,
-        inputDeviceLabel,
-      );
+    sampleRate,
+    fftSize,
+    hopSize,
+    timeWindowSec,
+    historySec,
+    minFreqHz,
+    maxFreqHz,
+    minDb,
+    maxDb,
+    colormap,
+    colorScheme,
+    freqScale,
+    peakHold,
+    peakHoldDecayDbPerSec,
+    inputDeviceId,
+    inputDeviceLabel,
+  );
 }
 
 enum ColormapKind { viridis, magma, turbo, grayscale }

@@ -15,6 +15,11 @@
       Tap the plot to place a crosshair and read exact frequency (Hz) and
       amplitude (dBFS). Works on Linux desktop and Linux phones via Flatpak.
     </p>
+    <p>
+      Peak-hold on the spectrum, freeze the scrolling spectrogram while live,
+      keyboard shortcuts on desktop, and export of the current plot (PNG) or
+      spectrum (CSV).
+    </p>
   </description>
   <launchable type="desktop-id">com.isyourbrainfoss.Spectrogram.desktop</launchable>
   <url type="homepage">https://github.com/isyourbrainfoss/spectrogram</url>
@@ -29,6 +34,7 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.1" date="2026-09-15"/>
     <release version="0.1.0" date="2026-07-15"/>
   </releases>
   <requires>
