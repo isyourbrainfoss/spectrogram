@@ -1,8 +1,8 @@
 {
-  "version": "build-13",
-  "versionName": "build-13",
-  "versionCode": 13,
-  "sha256sum": "4fc7b40403ce8a9e9c50e707aa830b3c8b0f307ed7f7d62cc694a7046c5676c3",
+  "version": "build-14",
+  "versionName": "build-14",
+  "versionCode": 14,
+  "sha256sum": "4ecbdd4dbba4d9b5529f90a5dc623e9e8700922f034a24ea856dde9d6cf0fc6e",
   "url": "https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/spectrogram-arm64-v8a.apk",
-  "uploadTimestamp": 1789501914000
+  "uploadTimestamp": 1791665949000
 }
