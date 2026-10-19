@@ -61,6 +61,27 @@ void main() {
       expect(frame[peak], lessThan(3.0));
     });
 
+    test('bin-centred sine reads its true level in dBFS', () {
+      const sr = 48000;
+      const fft = 2048;
+      final proc = StftProcessor(fftSize: fft, hopSize: 512);
+      // Bin 43 centre ≈ 1007.8 Hz: no scalloping loss.
+      const tone = 43 * sr / fft;
+      for (final (amp, expectedDb) in [(1.0, 0.0), (0.1, -20.0)]) {
+        final frames = proc.processAll(
+          generateSine(
+            freqHz: tone,
+            sampleRate: sr,
+            length: fft * 8,
+            amplitude: amp,
+          ),
+        );
+        final frame = frames[frames.length ~/ 2];
+        expect(StftProcessor.peakBin(frame, from: 1), 43);
+        expect(frame[43], closeTo(expectedDb, 0.1));
+      }
+    });
+
     test('bin frequency mapping', () {
       final proc = StftProcessor(fftSize: 2048, hopSize: 512);
       expect(proc.frequencyOfBin(0, 48000), 0);
