@@ -56,13 +56,7 @@ if [[ ! -x "$BUNDLE/spectrogram" ]]; then
   exit 1
 fi
 
-# Icon from Android launcher assets
-ICON_SRC="$APP_DIR/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
-if [[ ! -f "$ICON_SRC" ]]; then
-  ICON_SRC="$APP_DIR/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
-fi
-ICON_DST="$FLATPAK_DIR/com.isyourbrainfoss.Spectrogram.png"
-cp "$ICON_SRC" "$ICON_DST"
+# Launcher icons live in flatpak/icons/hicolor (regenerate with tool/generate_icons.sh).
 
 echo "==> Staging pulseaudio tools (parecord/pactl for record_linux)"
 TOOLS_DIR="$FLATPAK_DIR/pulse-tools"
