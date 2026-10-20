@@ -82,6 +82,26 @@ void main() {
       }
     });
 
+    test('DC and Nyquist bins are not doubled (1/Σw)', () {
+      const fft = 2048;
+      final proc = StftProcessor(fftSize: fft, hopSize: 512);
+      for (final amp in [1.0, 0.1]) {
+        final expectedDb = 20 * math.log(amp) / math.ln10;
+        // Constant offset: all energy in the DC bin.
+        final dc = Float32List(fft * 8)..fillRange(0, fft * 8, amp);
+        final dcFrames = proc.processAll(dc);
+        expect(dcFrames[dcFrames.length ~/ 2][0], closeTo(expectedDb, 0.1));
+        // Alternating ±amp: a cosine at exactly Nyquist (fs/2).
+        final ny = Float32List.fromList(
+          List.generate(fft * 8, (i) => i.isEven ? amp : -amp),
+        );
+        final nyFrames = proc.processAll(ny);
+        final frame = nyFrames[nyFrames.length ~/ 2];
+        expect(frame.length, fft ~/ 2 + 1);
+        expect(frame[fft ~/ 2], closeTo(expectedDb, 0.1));
+      }
+    });
+
     test('bin frequency mapping', () {
       final proc = StftProcessor(fftSize: 2048, hopSize: 512);
       expect(proc.frequencyOfBin(0, 48000), 0);
