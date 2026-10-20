@@ -39,17 +39,20 @@ modules:
       - install -Dm755 bundle/spectrogram /app/bin/spectrogram
       - cp -ra bundle/lib /app/bin/
       - cp -ra bundle/data /app/bin/
-      - install -Dm644 com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/128x128/apps/com.isyourbrainfoss.Spectrogram.png
-      - install -Dm644 com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/64x64/apps/com.isyourbrainfoss.Spectrogram.png
-      - install -Dm644 com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/512x512/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 icons/hicolor/512x512/apps/com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/512x512/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 icons/hicolor/256x256/apps/com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/256x256/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 icons/hicolor/128x128/apps/com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/128x128/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 icons/hicolor/64x64/apps/com.isyourbrainfoss.Spectrogram.png /app/share/icons/hicolor/64x64/apps/com.isyourbrainfoss.Spectrogram.png
+      - install -Dm644 icons/hicolor/scalable/apps/com.isyourbrainfoss.Spectrogram.svg /app/share/icons/hicolor/scalable/apps/com.isyourbrainfoss.Spectrogram.svg
       - install -Dm644 com.isyourbrainfoss.Spectrogram.desktop /app/share/applications/com.isyourbrainfoss.Spectrogram.desktop
       - install -Dm644 com.isyourbrainfoss.Spectrogram.metainfo.xml /app/share/metainfo/com.isyourbrainfoss.Spectrogram.metainfo.xml
     sources:
       - type: archive
         path: spectrogram-linux-bundle.tar.gz
         dest: bundle
-      - type: file
-        path: com.isyourbrainfoss.Spectrogram.png
+      - type: dir
+        path: icons
+        dest: icons
       - type: file
         path: com.isyourbrainfoss.Spectrogram.desktop
       - type: file
