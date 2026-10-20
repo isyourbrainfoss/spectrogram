@@ -12,6 +12,8 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
-# Exception: FOSS sideload upload key (stable Obtainium/CI signatures).
-!app/upload-keystore.jks
 
+# Signing material must never be committed (keys are rotated + supplied via CI secrets).
+upload-key.properties
+*.p12
+*.pem

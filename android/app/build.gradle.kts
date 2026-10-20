@@ -1,23 +1,49 @@
 import java.util.Properties
-import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Prefer committed upload-key.properties (stable Obtainium updates).
-// Optional override: CI secrets write android/key.properties + release.keystore.
-val uploadKeystoreProperties = Properties().apply {
-    val propsFile = rootProject.file("upload-key.properties")
+// Release signing is supplied by CI secrets — keystores/passwords are never committed.
+// Sources (first non-empty wins):
+//   1. Env vars: ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+//      ANDROID_KEY_PASSWORD (the release workflow decodes ANDROID_KEYSTORE_BASE64 into a temp file).
+//   2. android/key.properties (gitignored): storeFile, storePassword, keyAlias, keyPassword.
+// Without either, release builds fall back to debug signing (local dev only).
+val releaseKeyProperties = Properties().apply {
+    val propsFile = rootProject.file("key.properties")
     if (propsFile.exists()) {
         propsFile.inputStream().use { load(it) }
     }
 }
-val secretKeystoreProperties = Properties()
-val secretKeystorePropertiesFile = rootProject.file("key.properties")
-if (secretKeystorePropertiesFile.exists()) {
-    secretKeystoreProperties.load(FileInputStream(secretKeystorePropertiesFile))
+
+fun releaseSigningValue(envName: String, propName: String): String? =
+    System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: releaseKeyProperties.getProperty(propName)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = releaseSigningValue("ANDROID_KEYSTORE_PATH", "storeFile")?.let { file(it) }
+val releaseStorePassword = releaseSigningValue("ANDROID_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = releaseSigningValue("ANDROID_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword =
+    releaseSigningValue("ANDROID_KEY_PASSWORD", "keyPassword") ?: releaseStorePassword
+val hasReleaseSigning = releaseStoreFile?.exists() == true &&
+    releaseStorePassword != null && releaseKeyAlias != null && releaseKeyPassword != null
+// On CI (CI=true) a release build without the real key fails rather than silently
+// shipping a debug-signed APK. Fork-PR CI may opt out via ANDROID_ALLOW_DEBUG_RELEASE_SIGNING=true.
+val requireReleaseSigning = System.getenv("ANDROID_REQUIRE_RELEASE_SIGNING") == "true" ||
+    (System.getenv("CI") == "true" && System.getenv("ANDROID_ALLOW_DEBUG_RELEASE_SIGNING") != "true")
+if (requireReleaseSigning && !hasReleaseSigning) {
+    tasks.configureEach {
+        if (name == "preReleaseBuild") {
+            doFirst {
+                throw GradleException(
+                    "Release signing required but no keystore configured: set ANDROID_KEYSTORE_PATH, " +
+                        "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (CI secrets)."
+                )
+            }
+        }
+    }
 }
 
 android {
@@ -39,38 +65,23 @@ android {
     }
 
     signingConfigs {
-        if (uploadKeystoreProperties.isNotEmpty() &&
-            uploadKeystoreProperties.getProperty("storeFile") != null) {
-            create("upload") {
-                keyAlias = uploadKeystoreProperties.getProperty("keyAlias")
-                keyPassword = uploadKeystoreProperties.getProperty("keyPassword")
-                storeFile =
-                    uploadKeystoreProperties.getProperty("storeFile")?.let {
-                        rootProject.file(it)
-                    }
-                storePassword = uploadKeystoreProperties.getProperty("storePassword")
-            }
-        }
-        if (secretKeystorePropertiesFile.exists()) {
+        if (hasReleaseSigning) {
             create("release") {
-                keyAlias = secretKeystoreProperties["keyAlias"] as String
-                keyPassword = secretKeystoreProperties["keyPassword"] as String
-                storeFile = secretKeystoreProperties["storeFile"]?.let { file(it) }
-                storePassword = secretKeystoreProperties["storePassword"] as String
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
 
     buildTypes {
         release {
-            // Prefer secret release key when present; else stable upload keystore.
-            signingConfig = when {
-                secretKeystorePropertiesFile.exists() ->
-                    signingConfigs.getByName("release")
-                signingConfigs.findByName("upload") != null ->
-                    signingConfigs.getByName("upload")
-                else ->
-                    signingConfigs.getByName("debug")
+            // CI secret key when configured; debug key for local-only builds.
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
         }
     }
