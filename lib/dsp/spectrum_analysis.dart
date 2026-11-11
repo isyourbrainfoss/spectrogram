@@ -61,12 +61,19 @@ double interpolatePeakHz({
 }
 
 /// Strongest local maxima, spaced at least [minSeparationBins] apart.
+///
+/// When [axisPos] maps Hz to the 0..1 position on the plotted axis, picked
+/// peaks are also kept at least [minAxisGap] apart there. On a log axis the
+/// high bins are packed tightly, so bin spacing alone let markers pile up on
+/// top of each other.
 List<SpectrumPeak> findSpectrumPeaks({
   required Float32List db,
   required Float32List freqs,
   double floorDb = -90,
   int maxPeaks = 16,
   int minSeparationBins = 3,
+  double Function(double hz)? axisPos,
+  double minAxisGap = 0,
 }) {
   final n = math.min(db.length, freqs.length);
   if (n < 3 || maxPeaks <= 0) return const [];
@@ -92,7 +99,9 @@ List<SpectrumPeak> findSpectrumPeaks({
     if (picked.length >= maxPeaks) break;
     var near = false;
     for (final p in picked) {
-      if ((p.bin - c.bin).abs() < minSeparationBins) {
+      if ((p.bin - c.bin).abs() < minSeparationBins ||
+          (axisPos != null &&
+              (axisPos(p.hz) - axisPos(c.hz)).abs() < minAxisGap)) {
         near = true;
         break;
       }

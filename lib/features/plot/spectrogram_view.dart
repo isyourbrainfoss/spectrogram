@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui show Image, PixelFormat, decodeImageFromPixels;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -240,6 +241,10 @@ class _SpectrogramViewState extends State<SpectrogramView>
     widget.onCrosshairChanged?.call(p.clamp01());
   }
 
+  static bool get _touchPlatform =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   @override
   Widget build(BuildContext context) {
     final e = widget.engine;
@@ -260,9 +265,11 @@ class _SpectrogramViewState extends State<SpectrogramView>
           child: PlotChrome(
             yTicks: yTicks,
             xMinLabel: leftT,
-            xMidLabel: e.canZoom
-                ? (e.canPan ? 'wheel zoom · shift+wheel pan' : 'wheel zoom')
-                : 'time',
+            xMidLabel: timeAxisHint(
+              canZoom: e.canZoom,
+              canPan: e.canPan,
+              touch: _touchPlatform,
+            ),
             xMaxLabel: rightT,
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -498,4 +505,16 @@ class _SpectrogramPainter extends CustomPainter {
       old.image != image ||
       old.emptyColor != emptyColor ||
       old.layoutSize != layoutSize;
+}
+
+/// Middle label under the time axis: how to zoom/pan, in the words of the
+/// input the user actually has (a phone has no mouse wheel or Shift key).
+String timeAxisHint({
+  required bool canZoom,
+  required bool canPan,
+  required bool touch,
+}) {
+  if (!canZoom) return 'time';
+  if (touch) return canPan ? 'pinch zoom · two-finger pan' : 'pinch zoom';
+  return canPan ? 'wheel zoom · shift+wheel pan' : 'wheel zoom';
 }

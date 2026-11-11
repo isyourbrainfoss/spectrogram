@@ -644,11 +644,16 @@ class SpectrogramEngine extends ChangeNotifier {
     final src = _settings.peakHold && _peakHoldPrimed
         ? _peakHoldDb
         : _displayDb;
+    final st = _settings;
     return findSpectrumPeaks(
       db: src,
       freqs: _displayFreqs,
-      floorDb: _settings.minDb + 6,
+      floorDb: st.minDb + 6,
       maxPeaks: maxPeaks,
+      // Keep markers ~4 % of the plot width apart so they never overlap.
+      axisPos: (hz) =>
+          FreqAxis.freqToNorm(hz, st.minFreqHz, st.maxFreqHz, st.freqScale),
+      minAxisGap: 0.04,
     );
   }
 
