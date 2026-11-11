@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed — plot axis labels
+
+- Y-axis labels no longer clip at the top of the plot (12 kHz read as "2 kHz"),
+  wrap mid-unit ("2.5 / kHz"), or collide with the rotated axis title. The
+  label gutter is now measured from the actual labels, labels are clamped
+  inside the plot height, and colliding labels are dropped instead of drawn
+  on top of each other.
+- Frequency ticks use round 1-2-5 values (20, 50, 100, 200, 500 Hz, 1, 2,
+  5 kHz …) instead of odd fillers like 490 Hz; linear scales use an even step.
+- FFT view: ticks are plain numbers on a nice step (−80, −60, … 0) with a
+  single "dBFS" title in its own column; grid lines follow the ticks.
+- The status badge (IDLE / LIVE / HOLD) is readable in the light theme.
+
 ### Changed — dBFS readings are now ~6 dB higher
 
 - **Heads-up:** every dBFS readout (crosshair, spectrum chip, CSV export and

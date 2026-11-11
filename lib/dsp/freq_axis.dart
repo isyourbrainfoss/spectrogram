@@ -91,21 +91,53 @@ abstract final class FreqAxis {
     final lo = math.max(minHz, 1e-6);
     final hi = math.max(maxHz, lo * 1.0001);
     final candidates = <double>{lo, hi};
-    for (final c in commonHz) {
-      if (c >= lo * 0.999 && c <= hi * 1.001) {
-        candidates.add(c.clamp(lo, hi));
+    bool inRange(double v) => v >= lo * 0.999 && v <= hi * 1.001;
+
+    switch (scale) {
+      case FreqScale.logarithmic:
+        // 1-2-5 per decade reads cleanly (20, 50, 100, 200, 500, 1k, ...).
+        final firstDecade = (math.log(lo) / math.ln10).floor();
+        final lastDecade = (math.log(hi) / math.ln10).ceil();
+        for (var d = firstDecade; d <= lastDecade; d++) {
+          for (final m in const [1.0, 2.0, 5.0]) {
+            final v = m * math.pow(10, d).toDouble();
+            if (inRange(v)) candidates.add(v.clamp(lo, hi));
+          }
+        }
+      case FreqScale.linear:
+        final step = niceStep((hi - lo) / math.max(1, maxTicks - 1));
+        for (var v = (lo / step).ceil() * step; v <= hi * 1.001; v += step) {
+          if (inRange(v)) candidates.add(v.clamp(lo, hi));
+        }
+    }
+
+    // Narrow ranges: fall back to ISO landmarks, then rounded fillers.
+    if (candidates.length < 4) {
+      for (final c in commonHz) {
+        if (inRange(c)) candidates.add(c.clamp(lo, hi));
+      }
+    }
+    if (candidates.length < 3) {
+      for (var i = 1; i < 4; i++) {
+        candidates.add(
+          roundSignificant(normToFreq(i / 4, lo, hi, scale), 2).clamp(lo, hi),
+        );
       }
     }
 
-    for (var i = 1; i < 6; i++) {
-      candidates.add(normToFreq(i / 6, lo, hi, scale));
-    }
+    // A landmark hugging an end (10 kHz next to a 12 kHz max) only crowds it.
+    candidates.removeWhere(
+      (hz) =>
+          hz != lo &&
+          hz != hi &&
+          (freqToNorm(hz, lo, hi, scale) < 0.035 ||
+              freqToNorm(hz, lo, hi, scale) > 0.965),
+    );
 
     final sorted = candidates.toList()..sort();
     if (sorted.length <= maxTicks) {
       return [
-        for (final hz in sorted)
-          (norm: freqToNorm(hz, lo, hi, scale), hz: hz),
+        for (final hz in sorted) (norm: freqToNorm(hz, lo, hi, scale), hz: hz),
       ];
     }
 
@@ -134,6 +166,31 @@ abstract final class FreqAxis {
     return [
       for (final hz in out) (norm: freqToNorm(hz, lo, hi, scale), hz: hz),
     ];
+  }
+
+  /// A "nice" step (1, 2, 2.5 or 5 × 10^n) at or just above [raw].
+  static double niceStep(double raw) {
+    if (!(raw > 0) || raw.isInfinite) return 1;
+    final exp = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
+    final f = raw / exp;
+    final m = f <= 1
+        ? 1.0
+        : f <= 2
+        ? 2.0
+        : f <= 2.5
+        ? 2.5
+        : f <= 5
+        ? 5.0
+        : 10.0;
+    return m * exp;
+  }
+
+  /// Rounds [v] to [digits] significant digits (e.g. 487 → 490).
+  static double roundSignificant(double v, int digits) {
+    if (v == 0 || v.isNaN || v.isInfinite) return v;
+    final mag = (math.log(v.abs()) / math.ln10).floor() - digits + 1;
+    final scale = math.pow(10, mag).toDouble();
+    return (v / scale).round() * scale;
   }
 
   /// Nearest bin index for [hz] given monotonic [freqs].

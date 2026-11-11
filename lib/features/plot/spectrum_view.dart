@@ -101,9 +101,7 @@ class _SpectrumViewState extends State<SpectrumView> {
     final peaks = hasData ? engine.spectrumPeaks() : const <SpectrumPeak>[];
 
     return PlotChrome(
-      yTicks: [
-        for (final t in yTicks) AxisTick(norm: t.norm, label: '${t.label} dB'),
-      ],
+      yTicks: yTicks,
       yAxisTitle: 'dBFS',
       xMinLabel: formatFrequency(s.minFreqHz),
       xMaxLabel: formatFrequency(s.maxFreqHz),
@@ -185,6 +183,7 @@ class _SpectrumViewState extends State<SpectrumView> {
                           maxHz: s.maxFreqHz,
                           scale: s.freqScale,
                           freqTicks: xTicks,
+                          dbTicks: yTicks,
                           lineColor: scheme.primary,
                           fillColor: scheme.primary.withValues(alpha: 0.22),
                           holdColor: scheme.tertiary,
@@ -248,6 +247,7 @@ class _SpectrumPainter extends CustomPainter {
     required this.maxHz,
     required this.scale,
     required this.freqTicks,
+    required this.dbTicks,
     required this.lineColor,
     required this.fillColor,
     required this.holdColor,
@@ -267,6 +267,7 @@ class _SpectrumPainter extends CustomPainter {
   final double maxHz;
   final FreqScale scale;
   final List<AxisTick> freqTicks;
+  final List<AxisTick> dbTicks;
   final Color lineColor;
   final Color fillColor;
   final Color holdColor;
@@ -283,8 +284,8 @@ class _SpectrumPainter extends CustomPainter {
     final gridPaint = Paint()
       ..color = gridColor
       ..strokeWidth = 1;
-    for (var i = 0; i <= 4; i++) {
-      final y = size.height * i / 4;
+    for (final tick in dbTicks) {
+      final y = (1 - tick.norm) * size.height;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
     for (final tick in freqTicks) {
