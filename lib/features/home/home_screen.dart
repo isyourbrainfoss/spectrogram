@@ -525,8 +525,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     Positioned(
-                      top: 6,
-                      left: 56,
+                      top: 12,
+                      right: 56,
                       child: _LiveDot(active: running, frozen: engine.isFrozen),
                     ),
                     Positioned(
@@ -716,21 +716,36 @@ class _LiveDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final color = frozen
+    // Dot keeps the state hue; the pill and label use container/on-container
+    // pairs so the badge stays legible on both themes and over any colormap.
+    final dot = frozen
         ? scheme.tertiary
         : active
         ? scheme.secondary
-        : scheme.outline.withValues(alpha: 0.7);
+        : scheme.onSurfaceVariant.withValues(alpha: 0.75);
     final label = frozen
         ? 'HOLD'
         : active
         ? 'LIVE'
-        : 'idle';
+        : 'IDLE';
+    final bg = frozen
+        ? scheme.tertiaryContainer
+        : active
+        ? scheme.secondaryContainer
+        : scheme.surfaceContainerHighest;
+    final fg = frozen
+        ? scheme.onTertiaryContainer
+        : active
+        ? scheme.onSecondaryContainer
+        : scheme.onSurfaceVariant;
     return Material(
-      color: scheme.surface.withValues(alpha: 0.75),
-      borderRadius: BorderRadius.circular(12),
+      key: const ValueKey('status-badge'),
+      color: bg.withValues(alpha: 0.92),
+      shape: StadiumBorder(
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -738,12 +753,12 @@ class _LiveDot extends StatelessWidget {
               width: 7,
               height: 7,
               decoration: BoxDecoration(
-                color: color,
+                color: dot,
                 shape: BoxShape.circle,
                 boxShadow: active || frozen
                     ? [
                         BoxShadow(
-                          color: color.withValues(alpha: 0.55),
+                          color: dot.withValues(alpha: 0.55),
                           blurRadius: 5,
                         ),
                       ]
@@ -757,7 +772,7 @@ class _LiveDot extends StatelessWidget {
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.5,
-                color: color,
+                color: fg,
               ),
             ),
           ],

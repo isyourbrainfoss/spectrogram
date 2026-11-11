@@ -248,7 +248,7 @@ class _SpectrogramViewState extends State<SpectrogramView>
       minHz: s.minFreqHz,
       maxHz: s.maxFreqHz,
       scale: s.freqScale,
-      maxTicks: 8,
+      maxTicks: 10,
     );
 
     final leftT = formatTimeOffset(e.viewLeftTimeSec);
@@ -259,9 +259,6 @@ class _SpectrogramViewState extends State<SpectrogramView>
         Expanded(
           child: PlotChrome(
             yTicks: yTicks,
-            yAxisTitle: s.freqScale == FreqScale.logarithmic
-                ? 'Hz (log)'
-                : 'Hz',
             xMinLabel: leftT,
             xMidLabel: e.canZoom
                 ? (e.canPan ? 'wheel zoom · shift+wheel pan' : 'wheel zoom')
