@@ -141,6 +141,16 @@ class LiveControls extends StatelessWidget {
       ),
     ];
 
+    final labels = <String>[
+      recording ? 'Stop rec' : 'Record',
+      'Open',
+      engine.isFrozen ? 'Resume' : 'Freeze',
+      'Peak hold',
+      'Clear plot',
+      'Clear cursor',
+    ];
+    assert(labels.length == icons.length);
+
     return Padding(
       padding: EdgeInsets.fromLTRB(8, 4, 8, phone ? 10 : 6),
       child: Column(
@@ -176,29 +186,47 @@ class LiveControls extends StatelessWidget {
                           'REC ${engine.recordingSeconds.toStringAsFixed(1)}s',
                       color: scheme.error,
                     ),
-                  if (engine.peakFreqHz != null && hasData) ...[
+                  // One readout that says what it is: the strongest
+                  // frequency right now and its level.
+                  if (engine.peakFreqHz != null && hasData)
                     _Chip(
+                      key: const Key('peak_readout'),
                       icon: Icons.graphic_eq,
-                      label: formatFrequency(engine.peakFreqHz!),
+                      label:
+                          'Peak ${formatFrequency(engine.peakFreqHz!)} · '
+                          '${formatDb(engine.peakDb ?? engine.settings.minDb)}',
                       color: scheme.tertiary,
+                      maxWidth: 220,
                     ),
-                    _Chip(
-                      icon: Icons.straighten,
-                      label: formatDb(engine.peakDb ?? engine.settings.minDb),
-                      color: scheme.secondary,
-                    ),
-                  ],
                 ],
               ),
             ),
           if (phone) ...[
             SizedBox(width: double.infinity, child: start),
             const SizedBox(height: 4),
+            // Phones have no hover tooltips: name each icon under it.
             Row(
               children: [
                 for (var i = 0; i < icons.length; i++) ...[
                   if (i > 0) const SizedBox(width: 2),
-                  Expanded(child: Center(child: icons[i])),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        icons[i],
+                        Text(
+                          labels[i],
+                          maxLines: 1,
+                          overflow: TextOverflow.fade,
+                          softWrap: false,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -220,11 +248,18 @@ class LiveControls extends StatelessWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({required this.icon, required this.label, required this.color});
+  const _Chip({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.color,
+    this.maxWidth = 160,
+  });
 
   final IconData icon;
   final String label;
   final Color color;
+  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -241,7 +276,7 @@ class _Chip extends StatelessWidget {
           Icon(icon, size: 12, color: color),
           const SizedBox(width: 4),
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 160),
+            constraints: BoxConstraints(maxWidth: maxWidth),
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,

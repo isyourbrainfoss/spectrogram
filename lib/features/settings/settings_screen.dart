@@ -204,8 +204,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: const Text('Peak-hold decay'),
               subtitle: Text(
                 s.peakHoldDecayDbPerSec <= 0
-                    ? 'Infinite — holds until reset (P)'
-                    : '${s.peakHoldDecayDbPerSec.round()} dB/s',
+                    ? 'Holds until reset (P)'
+                    : 'How fast the held envelope falls back',
               ),
               trailing: DropdownButton<double>(
                 value: _decayValue(s.peakHoldDecayDbPerSec),
@@ -312,7 +312,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ListTile(
             title: const Text('FFT size'),
-            subtitle: Text('${s.fftSize} · finer freq resolution when larger'),
+            subtitle: const Text('Larger = finer frequency detail, blurrier in time'),
             trailing: DropdownButton<int>(
               value: AppSettings.allowedFftSizes.contains(s.fftSize)
                   ? s.fftSize
@@ -331,7 +331,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ListTile(
             title: const Text('Hop size'),
-            subtitle: Text('${s.hopSize} samples · smaller = smoother time'),
+            subtitle: const Text('Smaller = smoother in time, more CPU'),
             trailing: DropdownButton<int>(
               value: _validHop(s),
               onChanged: (v) {
