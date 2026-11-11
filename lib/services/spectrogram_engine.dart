@@ -58,6 +58,9 @@ class SpectrogramEngine extends ChangeNotifier {
   String? _errorMessage;
   bool _disposed = false;
 
+  /// Bumped by every live start / import so a superseded import stops.
+  int _analysisGeneration = 0;
+
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
   static const _notifyInterval = Duration(milliseconds: 33);
 
@@ -371,6 +374,7 @@ class SpectrogramEngine extends ChangeNotifier {
 
   Future<void> start() async {
     if (_disposed) return;
+    _analysisGeneration++;
     _errorMessage = null;
     _sourceSampleRate = null; // live mic uses settings sample rate
     _sourceLabel = null;
@@ -489,7 +493,9 @@ class SpectrogramEngine extends ChangeNotifier {
     String? label,
   }) async {
     if (_disposed) return;
+    final generation = ++_analysisGeneration;
     await stop();
+    if (_disposed || generation != _analysisGeneration) return;
     cancelFileRecording();
     _sourceSampleRate = sampleRate;
     _sourceLabel = label;
@@ -499,17 +505,30 @@ class SpectrogramEngine extends ChangeNotifier {
     final fft = _settings.fftSize;
     final hops = samples.length <= fft
         ? 1
-        : ((samples.length - fft) / hop).ceil().clamp(1, 120000);
+        // Frames = floor((n - fft) / hop) + 1. The old ceil() was one short
+        // when (n - fft) divided evenly, so the ring dropped the first frame.
+        : ((samples.length - fft) ~/ hop + 1).clamp(1, 120000);
     _rebuildPipeline(capacity: hops);
     _followLive = false;
     _processor.reset();
 
-    // Feed in chunks to avoid huge temporary allocations in STFT.
+    // Feed in chunks to avoid huge temporary allocations in STFT, and hand
+    // the event loop back regularly: a multi-minute file used to run every
+    // FFT in one synchronous loop on the UI isolate, freezing the app (and
+    // risking an ANR on Android) until the whole file was analysed.
     const chunk = 8192;
+    const chunksPerYield = 16;
+    var sinceYield = 0;
     for (var i = 0; i < samples.length; i += chunk) {
       final end = math.min(i + chunk, samples.length);
-      final slice = samples.sublist(i, end);
+      final slice = Float32List.sublistView(samples, i, end);
       _processor.push(slice, _ingestFrame);
+      if (++sinceYield >= chunksPerYield) {
+        sinceYield = 0;
+        await Future<void>.delayed(Duration.zero);
+        // Disposed, or the user started live capture / another import.
+        if (_disposed || generation != _analysisGeneration) return;
+      }
     }
     // Start at beginning of file so user can pan through the whole recording.
     _viewStart = 0;
@@ -591,7 +610,13 @@ class SpectrogramEngine extends ChangeNotifier {
 
   void _updatePeakHold(Float32List current) {
     if (!_settings.peakHold) {
-      _peakHoldDb = Float32List.fromList(current);
+      // Reuse the buffer: this runs for every STFT frame (~90/s live), so
+      // allocating a fresh list each time was pure GC churn.
+      if (_peakHoldDb.length == current.length) {
+        _peakHoldDb.setAll(0, current);
+      } else {
+        _peakHoldDb = Float32List.fromList(current);
+      }
       _peakHoldPrimed = true;
       _lastPeakHoldAt = DateTime.now();
       return;

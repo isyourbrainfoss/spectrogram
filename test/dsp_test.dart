@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -431,5 +432,57 @@ void main() {
       engine.toggleFreeze();
       expect(engine.isFrozen, isFalse);
     });
-  });
+  
+    test('long import yields to the event loop but analyses every frame',
+        () async {
+      const settings = AppSettings(sampleRate: 8000, fftSize: 512, hopSize: 128);
+      final engine = SpectrogramEngine(
+        capture: AudioCaptureService.none(),
+        settings: settings,
+      );
+      addTearDown(engine.dispose);
+      // 40 s at 8 kHz = 320k samples, i.e. many 8192-sample chunks.
+      final sine = generateSine(
+        freqHz: 440,
+        sampleRate: 8000,
+        length: 320000,
+        amplitude: 0.5,
+      );
+      var ticks = 0;
+      final timer = Timer.periodic(Duration.zero, (_) => ticks++);
+      await engine.analyzeMono(sine, 8000);
+      timer.cancel();
+      final expected = StftProcessor(fftSize: 512, hopSize: 128)
+          .processAll(sine)
+          .length;
+      expect(engine.filledColumns, expected);
+      expect(ticks, greaterThan(0), reason: 'import must not block the loop');
+    });
+
+    test('a newer import supersedes one still running', () async {
+      final engine = SpectrogramEngine(
+        capture: AudioCaptureService.none(),
+        settings: const AppSettings(sampleRate: 8000, fftSize: 512, hopSize: 128),
+      );
+      addTearDown(engine.dispose);
+      final long = generateSine(
+        freqHz: 440,
+        sampleRate: 8000,
+        length: 320000,
+        amplitude: 0.5,
+      );
+      final short = generateSine(
+        freqHz: 1000,
+        sampleRate: 8000,
+        length: 8000,
+        amplitude: 0.5,
+      );
+      final first = engine.analyzeMono(long, 8000, label: 'long');
+      await Future<void>.delayed(Duration.zero);
+      await engine.analyzeMono(short, 8000, label: 'short');
+      await first;
+      expect(engine.sourceLabel, 'short');
+      expect(engine.peakFreqHz, closeTo(1000, 40));
+    });
+});
 }
