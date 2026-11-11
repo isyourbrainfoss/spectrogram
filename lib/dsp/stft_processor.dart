@@ -6,19 +6,30 @@ import 'package:fftea/fftea.dart';
 /// Streaming STFT processor for live spectrograms.
 ///
 /// dBFS convention for a real-valued mono signal:
-///   dBFS = 20 * log10(max(2 * |X[k]| / N, ε))
-/// where N is the FFT size. A pure full-scale sine near a bin center yields
-/// approximately 0 dBFS at that bin (Hann coherent gain is only partially
-/// compensated; levels stay consistent for comparative readout).
+///   dBFS = 20 * log10(max(c * |X[k]| / Σw, ε))
+/// where Σw is the sum of the Hann window (its coherent gain, ≈ N/2) and
+/// c = 2 for 0 < k < N/2 (energy folded in from the negative frequencies) but
+/// c = 1 for the DC (k = 0) and Nyquist (k = N/2) bins, which have no mirror.
+/// A pure full-scale sine at a bin center reads 0 dBFS, as does a full-scale
+/// DC offset or Nyquist tone; off-center tones read up to ~1.4 dB lower
+/// (Hann scalloping loss).
 class StftProcessor {
-  StftProcessor({
-    required this.fftSize,
-    required this.hopSize,
-  })  : assert(fftSize >= 64 && (fftSize & (fftSize - 1)) == 0),
-        assert(hopSize > 0 && hopSize <= fftSize),
-        _stft = STFT(fftSize, Window.hanning(fftSize)),
-        binCount = fftSize ~/ 2 + 1,
-        _dbBuffer = Float32List(fftSize ~/ 2 + 1);
+  StftProcessor({required this.fftSize, required this.hopSize})
+    : assert(fftSize >= 64 && (fftSize & (fftSize - 1)) == 0),
+      assert(hopSize > 0 && hopSize <= fftSize),
+      _stft = STFT(fftSize, Window.hanning(fftSize)),
+      binCount = fftSize ~/ 2 + 1,
+      _dbBuffer = Float32List(fftSize ~/ 2 + 1),
+      _ampScale = 2.0 / _windowSum(fftSize),
+      _edgeScale = 1.0 / _windowSum(fftSize);
+
+  static double _windowSum(int n) {
+    var sum = 0.0;
+    for (final w in Window.hanning(n)) {
+      sum += w;
+    }
+    return sum;
+  }
 
   final int fftSize;
   final int hopSize;
@@ -26,6 +37,10 @@ class StftProcessor {
 
   final STFT _stft;
   final Float32List _dbBuffer;
+  final double _ampScale;
+
+  /// Scale for the unmirrored DC and Nyquist bins (1/Σw instead of 2/Σw).
+  final double _edgeScale;
 
   static const double epsilon = 1e-20;
   static const double _dbFloor = -200.0;
@@ -37,7 +52,10 @@ class StftProcessor {
 
   /// Push mono float samples. Calls [onFrame] for each completed hop with
   /// a dBFS spectrum of length [binCount] (reused buffer — copy if storing).
-  void push(Float32List samples, void Function(Float32List dbSpectrum) onFrame) {
+  void push(
+    Float32List samples,
+    void Function(Float32List dbSpectrum) onFrame,
+  ) {
     if (samples.isEmpty) return;
     // STFT.stream expects List<double>; Float32List implements that.
     _stft.stream(samples, (Float64x2List freq) {
@@ -56,14 +74,14 @@ class StftProcessor {
 
   void _toDb(Float64x2List freq) {
     final mags = freq.discardConjugates().magnitudes();
-    final scale = 2.0 / fftSize;
     final n = math.min(binCount, mags.length);
+    final nyquist = fftSize ~/ 2;
     for (var k = 0; k < n; k++) {
+      final scale = (k == 0 || k == nyquist) ? _edgeScale : _ampScale;
       final mag = mags[k] * scale;
       final db = 20.0 * math.log(math.max(mag, epsilon)) / math.ln10;
       _dbBuffer[k] = db < _dbFloor ? _dbFloor : db;
     }
-    // DC bin is often not doubled; keep simple uniform scale for consistency.
   }
 
   /// Frequency of bin [k] in Hz.

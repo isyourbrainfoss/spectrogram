@@ -7,6 +7,13 @@ Live adaptive spectrogram for **Android**, **Linux desktop**, and **Linux mobile
 
 Capture the microphone and view a real-time spectrogram (time × frequency × amplitude as color) or a live spectrum (frequency × amplitude). Tap the plot to place a crosshair and read exact **frequency (Hz)** and **amplitude (dBFS)**.
 
+## What's new
+
+- **dBFS calibration fix:** readings are now about **+6 dB higher** than in
+  0.1.1 and older (a full-scale sine reads 0 dBFS, not −6 dBFS). Old CSV
+  exports / screenshots are not directly comparable. See
+  [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 - **Spectrogram mode** — scrolling STFT heatmap (time on X, frequency on Y, dBFS as color)
