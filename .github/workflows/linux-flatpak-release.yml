@@ -147,17 +147,40 @@ jobs:
           path: bundles
           merge-multiple: true
 
-      - name: Upload Flatpak bundles to latest matching release (if any)
+      - name: Attach bundles to this commit's release
+        # android_release.yml creates the build-N release for the same push; wait for it,
+        # so the bundles never land on an older release (or nowhere).
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=$(gh release list --repo "${{ github.repository }}" --limit 5 --json tagName -q '.[0].tagName' 2>/dev/null || true)
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            echo "No GitHub release yet — skip bundle attach."
+          set -euo pipefail
+          cd bundles
+          sha256sum com.isyourbrainfoss.Spectrogram-x86_64.flatpak > com.isyourbrainfoss.Spectrogram-x86_64.flatpak.sha256
+          sha256sum com.isyourbrainfoss.Spectrogram-aarch64.flatpak > com.isyourbrainfoss.Spectrogram-aarch64.flatpak.sha256
+          TAG=""
+          for i in $(seq 1 40); do
+            for t in $(gh release list -R "$GITHUB_REPOSITORY" -L 10 --json tagName,isDraft -q '.[] | select(.isDraft | not) | .tagName'); do
+              if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$t" --jq .sha 2>/dev/null)" = "$GITHUB_SHA" ]; then TAG=$t; break 2; fi
+            done
+            echo "Waiting for the release of $GITHUB_SHA ($i/40)..."; sleep 30
+          done
+          if [ -z "$TAG" ]; then echo "::error::No release for $GITHUB_SHA after 20 minutes"; exit 1; fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          gh release upload "$TAG" com.isyourbrainfoss.Spectrogram-x86_64.flatpak com.isyourbrainfoss.Spectrogram-aarch64.flatpak \
+            com.isyourbrainfoss.Spectrogram-x86_64.flatpak.sha256 com.isyourbrainfoss.Spectrogram-aarch64.flatpak.sha256 \
+            --clobber -R "$GITHUB_REPOSITORY"
+
+      - name: Notify isyourbrainfoss/flatpak
+        # The shared, signed repo (https://isyourbrainfoss.github.io/flatpak/) imports and signs
+        # the bundles. No signing key lives here. Skipped when the secret is not set.
+        env:
+          DISPATCH_TOKEN: ${{ secrets.FLATPAK_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "::notice::FLATPAK_DISPATCH_TOKEN not set; the shared repo picks this up on its weekly or a manual run."
             exit 0
           fi
-          gh release upload "$TAG" \
-            bundles/com.isyourbrainfoss.Spectrogram-x86_64.flatpak \
-            bundles/com.isyourbrainfoss.Spectrogram-aarch64.flatpak \
-            --clobber \
-            --repo "${{ github.repository }}" || true
+          GH_TOKEN="$DISPATCH_TOKEN" gh api repos/isyourbrainfoss/flatpak/dispatches \
+            -f event_type=app-updated \
+            -F 'client_payload[app]=com.isyourbrainfoss.Spectrogram' \
+            -F "client_payload[tag]=$TAG"

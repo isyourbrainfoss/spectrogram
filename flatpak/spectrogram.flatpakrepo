@@ -2,6 +2,6 @@
 Title=Spectrogram
 Url=https://isyourbrainfoss.github.io/spectrogram/repo
 Homepage=https://github.com/isyourbrainfoss/spectrogram
-Comment=Community Flatpak builds of Spectrogram
+Comment=Moved: use the signed repo https://isyourbrainfoss.github.io/flatpak/ (this one stops after 2027-01-15)
 Description=Live microphone spectrogram for Linux desktop and mobile
 RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
