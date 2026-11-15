@@ -57,16 +57,29 @@ adb uninstall com.isyourbrainfoss.spectrogram
 ```
 ### Linux (Flatpak — recommended)
 
-Add the remote and install (same pattern as Flowlog / Progressor):
+Spectrogram is published for **x86_64** and **aarch64** in the signed
+[isyourbrainfoss Flatpak repository](https://isyourbrainfoss.github.io/flatpak/) (branch `stable`):
 
 ```bash
-flatpak remote-add --if-not-exists --user spectrogram \
-  https://isyourbrainfoss.github.io/spectrogram/spectrogram.flatpakrepo
-flatpak install --user spectrogram com.isyourbrainfoss.Spectrogram
+flatpak remote-add --user --if-not-exists isyourbrainfoss \
+  https://isyourbrainfoss.github.io/flatpak/isyourbrainfoss.flatpakrepo
+flatpak install --user isyourbrainfoss com.isyourbrainfoss.Spectrogram
 flatpak run com.isyourbrainfoss.Spectrogram
 ```
 
-CI publishes the ostree repo under `gh-pages/repo` on every push to `main`. Single-file `.flatpak` bundles are attached to releases when available.
+**Moving from the old remote** (`spectrogram`, unsigned; it keeps updating until 2027-01-15). Your data
+in `~/.var/app/com.isyourbrainfoss.Spectrogram` is kept:
+
+```bash
+flatpak remote-add --user --if-not-exists isyourbrainfoss \
+  https://isyourbrainfoss.github.io/flatpak/isyourbrainfoss.flatpakrepo
+flatpak install --user --reinstall isyourbrainfoss com.isyourbrainfoss.Spectrogram
+flatpak remote-delete --user spectrogram
+```
+
+CI attaches single-file `.flatpak` bundles (+ `.sha256`) to each `build-N` release and notifies the
+shared repo, which signs and serves them. The old unsigned repo under `gh-pages/repo` is still updated
+during the transition.
 
 **Build Flatpak locally:**
 
