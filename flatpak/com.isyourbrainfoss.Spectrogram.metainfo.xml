@@ -46,4 +46,7 @@
     <control>keyboard</control>
     <control>touch</control>
   </supports>
+  <custom>
+    <value key="Purism::form_factor">mobile</value>
+  </custom>
 </component>
