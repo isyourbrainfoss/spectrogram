@@ -1,6 +1,6 @@
 app-id: com.isyourbrainfoss.Spectrogram
 runtime: org.gnome.Platform
-runtime-version: '48'
+runtime-version: '50'
 sdk: org.gnome.Sdk
 command: spectrogram
 separate-locales: false

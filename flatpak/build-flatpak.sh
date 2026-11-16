@@ -40,10 +40,10 @@ if ! command -v flutter >/dev/null; then
   exit 1
 fi
 
-echo "==> Ensuring GNOME Platform/SDK 48"
+echo "==> Ensuring GNOME Platform/SDK 50"
 flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48 >/dev/null 2>&1 || \
-  flatpak install -y flathub org.gnome.Platform//48 org.gnome.Sdk//48
+flatpak install -y --user flathub org.gnome.Platform//50 org.gnome.Sdk//50 >/dev/null 2>&1 || \
+  flatpak install -y flathub org.gnome.Platform//50 org.gnome.Sdk//50
 
 echo "==> Building Flutter Linux release ($FLATPAK_ARCH)"
 cd "$APP_DIR"
