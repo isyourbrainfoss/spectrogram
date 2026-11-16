@@ -3,59 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex">
-  <title>Spectrogram build-21</title>
-  <link rel="stylesheet" href="style.css">
-  <style>:root { --accent: #3fb950; --accent-ink: #04100a; }</style>
+  <title>Spectrogram build-22 (Android)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; background: #0d1117; color: #e6edf3; }
+    a { color: #58a6ff; }
+    a.button { display: inline-block; padding: 0.6rem 1.2rem; background: #238636; color: #fff; text-decoration: none; border-radius: 6px; }
+    code { background: #21262d; padding: 0.1rem 0.3rem; border-radius: 3px; }
+  </style>
 </head>
 <body>
-<p id="moved-flatpak" style="margin:0;padding:.7rem 1rem;background:#fff3cd;color:#5c4400;font:15px/1.4 system-ui,sans-serif">&#128230; <strong>Flatpak moved:</strong> Spectrogram is now in the signed <a href="https://isyourbrainfoss.github.io/flatpak/">isyourbrainfoss Flatpak repository</a> (x86_64 + aarch64). The old repository here keeps updating until 2027-01-15.</p>
-  <div class="wrap">
-    <header class="hero">
-      <div>
-        <p class="kicker">Android and Linux</p>
-        <h1>Spectrogram</h1>
-        <p class="lede">A live microphone spectrogram and spectrum for Android, Linux desktop, and Linux phones. Tap the plot for a frequency and dBFS readout.</p>
-        <p class="meta">Pages build-21 · STFT heatmap or FFT line plot</p>
-        <div class="actions">
-      <a class="button" href="#install">Install</a>
-      <a class="button secondary" href="https://github.com/isyourbrainfoss/spectrogram">Source on GitHub</a>
-        </div>
-      </div>
-      <p class="disclaimer">Personal, experimental software. Nothing here is a finished product, and nothing was necessarily written or reviewed by a human unless it says so. Use it at your own risk.</p>
-    </header>
-    <nav class="toc">
-      <a href="#screenshots">Screenshots</a>
-      <a href="#install">Install</a>
-      <a href="https://github.com/isyourbrainfoss/spectrogram">github.com/isyourbrainfoss/spectrogram</a>
-    </nav>
-    <section id="screenshots">
-      <h2>Screenshots</h2>
-      <ul class="shots">
-        <li><figure class="shot phone"><a href="images/stft.jpg"><img src="images/stft.jpg" alt="STFT of the demo signal: a rising whistle and a sung harmonic tone, on a log frequency axis from 20 Hz to 12 kHz."></a><figcaption>Spectrogram</figcaption></figure></li><li><figure class="shot phone"><a href="images/fft.jpg"><img src="images/fft.jpg" alt="FFT spectrum of the demo signal in dBFS, with a peak-hold envelope and marked peaks."></a><figcaption>Spectrum</figcaption></figure></li><li><figure class="shot phone"><a href="images/settings.jpg"><img src="images/settings.jpg" alt="Settings: color scheme, colormap, frequency scale, peak hold, microphone, sample rate, and FFT size."></a><figcaption>Settings</figcaption></figure></li><li><figure class="shot phone"><a href="images/stft-light.jpg"><img src="images/stft-light.jpg" alt="The spectrogram in the light theme."></a><figcaption>Light theme</figcaption></figure></li>
-      </ul>
-    </section>
-    <section id="install">
-      <h2>Install</h2>
-      
-    <div class="grid-2">
-      <div class="card"><h3>Android</h3>
-<p>Current Pages build: <strong>build-21</strong> (version code 21), arm64-v8a.</p><p>On Android, <a href="https://github.com/ImranR98/Obtainium">Obtainium</a> can install updates from a Standard JSON file. Add this URL:</p>
-<pre><code>https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/version.json</code></pre>
-<p><a class="button secondary" href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/version.json">Add in Obtainium</a> (opens the app if it is already installed).</p>
-<p>GitHub Release asset URLs often fail on phones with “Connection closed while receiving data”. Prefer the JSON mirror above.</p><p><a class='button' href='https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/spectrogram-arm64-v8a.apk'>Download APK</a></p><p class='hash'>SHA-256: <code>09bf04bbe5a75b3f4791714aea982c53e664772928d4f8804aa1eeb7591a2f56</code></p><p>If a very old debug-signed build is installed, uninstall once so later updates can apply in place.</p></div>
-      <div class="card"><h3>Linux (Flatpak)</h3>
-<p>x86_64 and aarch64, from the signed <a href="https://isyourbrainfoss.github.io/flatpak/">isyourbrainfoss Flatpak repository</a>:</p><pre><code>flatpak remote-add --user --if-not-exists isyourbrainfoss \
-  https://isyourbrainfoss.github.io/flatpak/isyourbrainfoss.flatpakrepo
-flatpak install --user isyourbrainfoss com.isyourbrainfoss.Spectrogram</code></pre><p>Installed from the old unsigned remote <code>spectrogram</code>? It keeps updating until 2027-01-15. Switch with:</p><pre><code>flatpak install --user --reinstall isyourbrainfoss com.isyourbrainfoss.Spectrogram
-flatpak remote-delete --user spectrogram</code></pre></div>
-    </div>
-    
-    </section>
-    
-    <footer>
-      <p>Source: <a href="https://github.com/isyourbrainfoss/spectrogram">github.com/isyourbrainfoss/spectrogram</a>. This is a personal project page, not a store listing.</p>
-    </footer>
-  </div>
+  <h1>Spectrogram build-22</h1>
+  <p>Live microphone spectrogram for Android and Linux.</p>
+  <p><a class="button" href="https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/spectrogram-arm64-v8a.apk">Download APK (arm64-v8a)</a></p>
+  <p>Version <strong>build-22</strong> (build 22). SHA-256: <code>7109f9c7f20dba04786ea34561823e022e6eda668d5cd6092a80f30e0a43e783</code></p>
+  <p>Install via <a href="https://github.com/ImranR98/Obtainium">Obtainium</a>:</p>
+  <p><code>https://raw.githubusercontent.com/isyourbrainfoss/spectrogram/gh-pages/version.json</code></p>
+  <p><a href="https://github.com/isyourbrainfoss/spectrogram">Source on GitHub</a></p>
 </body>
 </html>
