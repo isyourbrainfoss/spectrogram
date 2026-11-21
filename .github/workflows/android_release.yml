@@ -2,6 +2,10 @@ name: Android Release
 
 # Publish arm64 APK + Obtainium version.json on every main push (Flowlog-style).
 # Tag pushes (v*) also create a named GitHub Release.
+# Same Flutter as the Flatpak release so Android does not drift onto 3.50.
+env:
+  FLUTTER_VERSION: "3.47.8"
+
 on:
   push:
     branches: [main]
@@ -34,6 +38,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Accept Android SDK licenses
